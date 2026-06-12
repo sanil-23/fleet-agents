@@ -1,14 +1,19 @@
 You are doing a CodeRabbit-style review of PR #__PR__ on `__REPO__`.
 
-The branch `pr/__PR__` is already checked out locally with `main` merged in and upstream tracking set — skip any fetch / checkout / merge phases.
+The branch `pr/__PR__` is already checked out locally with the base branch merged in and
+upstream tracking set — skip any fetch / checkout / merge phases.
 
 __CONFLICT_BLOCK__
 
 # Your job
 
-Produce a thorough CodeRabbit-style review: walkthrough, change summary table, per-file analysis, actionable inline comments with concrete code suggestions, and a nitpick section. Then **post the review and any inline comments via `gh`**. If the changes look acceptable overall, approve the PR with `gh pr review __PR__ -R __REPO__ --approve`. If blocking issues remain, request changes instead.
+Produce a thorough CodeRabbit-style review: walkthrough, change summary table, per-file
+analysis, actionable inline comments with concrete code suggestions, and a nitpick section.
+Then **post the review and any inline comments via `gh`**. If the changes look acceptable
+overall, approve with `gh pr review __PR__ -R __REPO__ --approve`. If blocking issues remain,
+request changes instead.
 
-Do NOT apply code changes — this is a review-only task. (If the user wanted fixes applied, they would have run `pnpm review fix` instead.)
+Do NOT apply code changes — this is a review-only task.
 
 # Workflow
 
@@ -33,42 +38,47 @@ Skipping this produces shallow reviews that miss architectural issues.
 
 ## 3. Analyze against these axes
 
-**Correctness** — logic bugs, off-by-one, null/undefined, async/await misuse, race conditions, error propagation (`Result<T>` / `RpcOutcome<T>` / thrown errors).
+**Correctness** — logic bugs, off-by-one, null/undefined, async/await misuse, race
+conditions, resource leaks, error propagation and handling.
 
-**Project standards** (from `CLAUDE.md`)
-- New Rust functionality lives in a subdirectory under `src/openhuman/`, not root-level `.rs` files.
-- Controllers exposed via `schemas.rs` + registry, not ad-hoc branches in `core/cli.rs` / `core/jsonrpc.rs`.
-- No dynamic `import()` in production `app/src` code.
-- Frontend reads `VITE_*` via `app/src/utils/config.ts`, not `import.meta.env` directly.
-- `app/src-tauri` is desktop-only; no Android/iOS branches there.
-- Domain `mod.rs` is export-focused; operational code in `ops.rs` / `store.rs` / `types.rs`.
-- Event bus via `publish_global` / `subscribe_global` / `register_native_global` / `request_native_global` — never construct `EventBus` / `NativeRegistry` directly.
-- CEF webviews must not grow new JS injection (see `CLAUDE.md` for details).
-- Files under ~500 lines preferred.
+**Project standards** — read the repo's own `CLAUDE.md` / `AGENTS.md` / `CONTRIBUTING` and
+its linter/formatter/editorconfig, and hold the change to *those* conventions (module layout,
+error-handling patterns, logging style, file-size limits, naming). Don't impose rules the
+project doesn't follow.
 
-**Testing** — new behavior ships with tests (Vitest / `cargo test` / `tests/json_rpc_e2e.rs`). Behavior over implementation. No real network, no time flakes. Coverage on branches/error paths. Coverage gate: ≥ 80% on changed lines.
+**Testing** — new behavior ships with tests using the repo's framework; cover branches and
+error paths; test behavior over implementation; no real network, no time-based flakes.
 
-**Debug logging** — entry/exit on new flows, branches, retries, state transitions. Grep-friendly prefixes (`[domain]`, `[rpc]`, `[ui-flow]`). No secrets/PII.
+**Debug logging** — meaningful logs on new flows (entry/exit, branches, retries, state
+transitions) with grep-friendly prefixes; never log secrets or PII.
 
-**Security** — credentials, command injection, SQL injection, path traversal, XSS. Secret files (`.env`, `*.key`). Validation at boundaries.
+**Security** — credentials, command injection, SQL injection, path traversal, XSS, secret
+files (`.env`, `*.key`), validation at trust boundaries.
 
-**Design / code quality** — dead code, commented-out blocks, unexplained TODOs, over-abstraction, duplication, `_prefixed` backwards-compat vars, "what" comments instead of "why".
+**Design / code quality** — dead code, commented-out blocks, unexplained TODOs,
+over-abstraction, duplication, backwards-compat cruft, "what" comments instead of "why".
 
-**UX / UI** (frontend) — accessibility, keyboard nav, loading/error/empty states, mobile responsiveness.
+**UX / UI** (frontend changes) — accessibility, keyboard nav, loading/error/empty states,
+responsiveness.
 
-**Documentation** — rustdoc/comments match new behavior; `AGENTS.md` / architecture docs updated for rule changes; capability catalog (`src/openhuman/about_app/`) updated for user-facing feature changes.
+**Documentation** — comments/API docs match new behavior; architecture/usage docs updated for
+behavior or rule changes.
 
 ## 4. Classify findings
 
 For each finding, tag:
-- **Severity**: `blocker` (must fix before merge), `major` (should fix), `minor` / `nitpick` (optional polish), `question` (needs discussion).
+- **Severity**: `blocker` (must fix before merge), `major` (should fix), `minor` / `nitpick`
+  (optional polish), `question` (needs discussion).
 - **Confidence**: `high` / `medium` / `low`.
 
 Drop `low`-confidence `minor` items — they're noise. Keep real issues; don't pad the review.
 
 ## 5. Emit and post the review
 
-Format the review using the structure below, then post it as a single review on the PR using `gh pr review __PR__ -R __REPO__ --body-file -` (or `--body "..."`). For each per-file actionable item, also post an inline review comment via `gh api repos/__REPO__/pulls/__PR__/comments` so they appear on the right line in the diff:
+Format the review using the structure below, then post it as a single review on the PR using
+`gh pr review __PR__ -R __REPO__ --body-file -` (or `--body "..."`). For each per-file
+actionable item, also post an inline review comment via `gh api repos/__REPO__/pulls/__PR__/comments`
+so it lands on the right line in the diff:
 
 ```bash
 gh api -X POST repos/__REPO__/pulls/__PR__/comments \
@@ -91,18 +101,18 @@ Review body structure:
 
 | File | Summary |
 | --- | --- |
-| `path/to/file1.ts` | <1-line summary> |
-| `path/to/file2.rs` | <…> |
+| `path/to/file1` | <1-line summary> |
+| `path/to/file2` | <…> |
 
 ## Actionable comments (<count>)
 
 ### 🛑 Blockers
 
-#### 1. `path/to/file.rs:42-56` — <short title>
+#### 1. `path/to/file:42-56` — <short title>
 <2–5 line explanation of the issue, why it's wrong, and the downstream effect.>
 
 **Suggested change:**
-```rust
+```
 // before
 <snippet>
 
@@ -111,58 +121,45 @@ Review body structure:
 ```
 
 ### ⚠️ Major
-#### 2. `app/src/components/Foo.tsx:110-128` — <short title>
+#### 2. `path/to/other:110-128` — <short title>
 <…same structure…>
 
 ### 💡 Refactor / suggestion
-#### 3. `src/openhuman/bar/ops.rs:200-240` — <short title>
+#### 3. `path/to/thing:200-240` — <short title>
 <…>
 
 ## Nitpicks (<count>)
-- `path/to/file.ts:15` — prefer `const` over `let`; not reassigned.
-- `src/openhuman/x/mod.rs:3` — unused import `std::collections::HashMap`.
+- `path/to/file:15` — prefer `const` over `let`; not reassigned.
 
 ## Questions for the author (<count>)
-- `path/to/file.ts:88` — <question>
+- `path/to/file:88` — <question>
 
 ## Verified / looks good
-- Error paths in `foo.rs` propagate `RpcOutcome<T>` correctly.
-- New Vitest in `Foo.test.tsx` exercises empty + error states.
+- <what you checked that's correct>
 ````
 
 Rules:
 - Use **file:line** or **file:line-range** for every actionable item.
-- Every actionable comment must include a **concrete proposed fix** — a code block where plausible. "Consider refactoring" is not a suggestion.
+- Every actionable comment must include a **concrete proposed fix** — a code block where
+  plausible. "Consider refactoring" is not a suggestion.
 - Before/after code blocks should be minimal.
-- Do not invent issues. If the PR is clean, say so and keep sections short.
-- Do not repeat what `cargo clippy` / ESLint would catch unless CI hasn't caught it.
+- Do not invent issues. If the PR is clean, say so and keep it short.
+- Do not repeat what the linter/compiler would catch unless CI hasn't caught it.
 
 ## 6. Approve or request changes
 
 After posting the review:
-- If no blockers and no major issues: `gh pr review __PR__ -R __REPO__ --approve`.
-- If blockers exist: `gh pr review __PR__ -R __REPO__ --request-changes --body "See review above."`.
-- Otherwise: leave the review as a plain `--comment`.
+- No blockers, no major issues: `gh pr review __PR__ -R __REPO__ --approve`.
+- Blockers exist: `gh pr review __PR__ -R __REPO__ --request-changes --body "See review above."`.
+- Otherwise: leave it as a plain `--comment`.
 
 ## 7. Final report (to the user)
 
 ```text
 ## PR #__PR__ — Review posted
-
-### Findings raised: <total>
-- Blockers: <n>
-- Major: <n>
-- Refactor / suggestion: <n>
-- Nitpicks: <n>
-- Questions: <n>
-
-### Action
-- Posted review: <yes/no>
-- Inline comments posted: <n>
-- Final state: APPROVED / CHANGES_REQUESTED / COMMENTED
-
-### PR URL
-<url>
+### Findings raised: <total>  (blockers <n>, major <n>, suggestions <n>, nitpicks <n>, questions <n>)
+### Action: posted review <yes/no>, inline comments <n>, final state APPROVED / CHANGES_REQUESTED / COMMENTED
+### PR URL: <url>
 ```
 
 # Guardrails

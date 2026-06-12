@@ -576,7 +576,7 @@ function cmdInstallClaude() {
 }
 
 // ----------------------------------------------------------------------------- review family
-// Faithful wrappers around the bundled OpenHuman PR toolkit (review/*.sh).
+// Faithful wrappers around the bundled PR review toolkit (review/*.sh).
 // They operate on a PR number in a real git repo (gh + jq + bash required).
 //   sync     <pr>                    checkout PR as pr/<num>, merge main, wire push remote
 //   review   <pr> [extra]            sync + CodeRabbit-style review agent
@@ -657,7 +657,7 @@ Usage:
   fleet install-claude                                install the /fleet slash command for Claude Code
   fleet help                                          this help
 
-PR review (OpenHuman toolkit — needs git + gh + jq; run in the repo or pass -C <repo>):
+PR review (toolkit — needs git + gh + jq; run in the repo or pass -C <repo>):
   fleet sync     <pr>                                 checkout PR as pr/<num>, merge main, wire push
   fleet review   <pr> [extra-prompt]                  sync + CodeRabbit-style review agent
   fleet fix      <pr> [extra-prompt]                  sync + review-and-fix agent (commit & push)

@@ -40,15 +40,17 @@ sync_pr "$pr"
 coverage_checks=$(gh pr checks "$REVIEW_PR" -R "$REVIEW_REPO_RESOLVED" 2>/dev/null \
   | grep -i 'coverage' || true)
 
+# Name of the coverage CI workflow to inspect. Override per-repo with REVIEW_COVERAGE_WORKFLOW.
+COVERAGE_WORKFLOW="${REVIEW_COVERAGE_WORKFLOW:-Coverage}"
 coverage_runs_json=$(gh run list -R "$REVIEW_REPO_RESOLVED" \
-  --workflow "Coverage Gate" \
+  --workflow "$COVERAGE_WORKFLOW" \
   --branch "$REVIEW_HEAD_BRANCH" \
   --limit 5 \
   --json databaseId,status,conclusion,url,createdAt,updatedAt,headSha || echo '[]')
 
 coverage_runs_summary=$(printf '%s\n' "$coverage_runs_json" | jq -r '
   if length == 0 then
-    "No recent Coverage Gate workflow runs found for this branch."
+    "No recent coverage workflow runs found for this branch."
   else
     .[] | "- run=\(.databaseId) status=\(.status) conclusion=\(.conclusion // "n/a") sha=\(.headSha) updated=\(.updatedAt) url=\(.url)"
   end
@@ -65,7 +67,7 @@ coverage gate for PR #$REVIEW_PR.
 Current coverage-related PR checks:
 $coverage_checks
 
-Recent Coverage Gate workflow runs for this branch:
+Recent coverage workflow runs for this branch:
 $coverage_runs_summary
 
 Use the GitHub Actions error output for the coverage jobs to identify what is \

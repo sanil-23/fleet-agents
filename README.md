@@ -47,7 +47,7 @@ From inside a Claude session:
 
 ## PR review workflow
 
-Bundled from the OpenHuman `scripts/shortcuts/review` toolkit — a PR-number-based
+A bundled PR-number-based
 review/fix/merge loop (agent-agnostic; default agent `claude`). Run inside the target
 git repo, or pass `-C <repo-dir>`. Requires `git`, `gh`, `jq` (Unix / WSL only).
 
