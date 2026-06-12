@@ -11,14 +11,20 @@ them from one place, including from *inside* a Claude session via a `/fleet` sla
 ## Install
 
 ```bash
-npm install -g fleet-agents      # provides the `fleet` command
+# from GitHub (works today)
+npm install -g git+https://github.com/sanil-23/fleet-agents.git
+# …or once published to npm:
+# npm install -g fleet-agents
+
 fleet install-claude             # adds the /fleet slash command to ~/.claude/commands
 ```
 
 `fleet install-claude` writes to `~/.claude/commands/fleet.md` — the same location on every
 OS (`%USERPROFILE%\.claude\commands` on Windows), resolved via Node's `os.homedir()`.
 
-Requires: Node ≥ 16, `git`, the `claude` CLI on your PATH, and (on macOS/Linux) `tmux`.
+**Requires:** Node ≥ 16, `git`, and the `claude` CLI on your PATH. `tmux` on macOS/Linux
+(Windows uses separate terminal windows). The PR review commands (`fleet review/fix/approve`)
+also need `gh` + `jq`.
 
 ## Usage
 
