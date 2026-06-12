@@ -38,6 +38,8 @@ fleet skill ls | add <name> <file.md> | rm <name> | show <name>   # reusable ski
 fleet add <repo> <task> "<prompt>" --skill <name>                 # prepend a skill to a task
 fleet ls                                          # list active worktrees
 fleet resume [repo] [--name X]                    # rebuild a session: manager pane + every worker, conversations continued
+fleet sessions                                    # list all sessions (manager, tasks, live panes)
+fleet sessions rm <session> [--branch]            # remove a session + ALL its child/sub-child sessions (kill + worktrees)
 fleet rm  <repo> <task> [--branch]                # remove a worktree (+branch)
 fleet attach                                      # re-attach to the tmux session
 fleet kill                                        # tear down the session

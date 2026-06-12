@@ -100,10 +100,20 @@ function saveState(state) {
     fs.writeFileSync(statePath(state.session), JSON.stringify(state, null, 2));
   } catch {}
 }
+// If this session was created from INSIDE another fleet session (env FLEET_SESSION differs),
+// record that parent — so removing the parent can cascade to child/sub-child sessions.
+function recordParent(session) {
+  const env = process.env.FLEET_SESSION;
+  if (!env || env === session) return;
+  const s = loadState(session);
+  if (!s.parent) { s.parent = env; saveState(s); }
+}
 function recordManagerDir(session, dir) {
+  recordParent(session);
   const s = loadState(session); s.managerDir = dir; saveState(s);
 }
 function recordTask(session, repo, task, wt) {
+  recordParent(session);
   const s = loadState(session);
   if (!s.tasks.some((t) => t.repo === repo && t.task === task)) s.tasks.push({ repo, task, wt });
   saveState(s);
@@ -436,6 +446,68 @@ function cmdLsSessions() {
   }
 }
 
+// Remove a worktree by its path (resolve its main repo from the worktree itself).
+function removeWorktreeByPath(wt, branch, delBranch) {
+  if (!fs.existsSync(wt)) return;
+  let mainRepo = null;
+  try {
+    const cd = execFileSync('git', ['-C', wt, 'rev-parse', '--git-common-dir'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    mainRepo = path.dirname(path.resolve(wt, cd));
+  } catch {}
+  try {
+    if (mainRepo) execFileSync('git', ['-C', mainRepo, 'worktree', 'remove', '--force', wt], { stdio: 'ignore' });
+    else fs.rmSync(wt, { recursive: true, force: true });
+  } catch { try { fs.rmSync(wt, { recursive: true, force: true }); } catch {} }
+  if (delBranch && mainRepo && branch) {
+    try { execFileSync('git', ['-C', mainRepo, 'branch', '-D', branch], { stdio: 'ignore' }); } catch {}
+  }
+}
+
+// Build parent → [children] from recorded session state.
+function sessionChildrenMap() {
+  const children = {};
+  if (!fs.existsSync(STATE_DIR)) return children;
+  for (const f of fs.readdirSync(STATE_DIR)) {
+    if (!f.endsWith('.json')) continue;
+    const name = f.replace(/\.json$/, '');
+    const p = loadState(name).parent;
+    if (p) (children[p] = children[p] || []).push(name);
+  }
+  return children;
+}
+
+function removeOneSession(name, delBranch) {
+  if (BACKEND === 'tmux') { try { execFileSync('tmux', ['kill-session', '-t', name], { stdio: 'ignore' }); } catch {} }
+  const s = loadState(name);
+  for (const t of s.tasks) removeWorktreeByPath(t.wt, t.task, delBranch);
+  try { fs.unlinkSync(statePath(name)); } catch {}
+  console.log(`  removed session '${name}' — killed + ${s.tasks.length} worktree(s)${delBranch ? ' + branches' : ''}`);
+}
+
+// Remove a session by name AND every child/sub-child session it spawned.
+function cmdRemoveSession(args) {
+  const delBranch = args.includes('--branch');
+  const name = args.find((a) => !a.startsWith('-'));
+  if (!name) die('usage: fleet sessions rm <session> [--branch]');
+  const exists = fs.existsSync(statePath(name)) || (BACKEND === 'tmux' && tmuxHasName(name));
+  if (!exists) die(`no session '${name}' (see: fleet sessions)`);
+
+  // Collect the subtree (depth-first), then remove children before their parent.
+  const children = sessionChildrenMap();
+  const order = [];
+  (function walk(n) { (children[n] || []).forEach(walk); order.push(n); })(name);
+
+  console.log(`fleet: removing session '${name}'${order.length > 1 ? ` + ${order.length - 1} descendant session(s)` : ''}`);
+  for (const s of order) removeOneSession(s, delBranch);
+}
+
+function cmdSessions(args) {
+  const sub = args[0];
+  if (sub === 'rm' || sub === 'remove') return cmdRemoveSession(args.slice(1));
+  return cmdLsSessions();
+}
+
 function cmdLs(args = []) {
   if (args.includes('--sessions') || args.includes('-s')) return cmdLsSessions();
   if (!fs.existsSync(WT_ROOT)) { console.log('no worktrees yet'); return; }
@@ -650,6 +722,7 @@ Usage:
   fleet ls                                            list active worktrees
   fleet resume [session] [--dry-run]                 rebuild a session (manager + panes); no arg = most recent manager
   fleet sessions   |   fleet ls --sessions           list all sessions (manager, tasks, live panes)
+  fleet sessions rm <session> [--branch]             remove a session + ALL its child/sub-child sessions (kill + worktrees)
   fleet prune [session] [--dry-run]                  drop recorded tasks whose worktree is gone
   fleet rm  <repo> <task> [--branch]                  remove worktree (+branch with --branch)
   fleet attach                                        attach to the fleet tmux session (tmux backend)
@@ -734,7 +807,7 @@ function main() {
     case 'investigate': cmdResearch(rest); break;
     case 'ls':
     case 'list': cmdLs(rest); break;
-    case 'sessions': cmdLsSessions(); break;
+    case 'sessions': cmdSessions(rest); break;
     case 'prune': cmdPrune(rest); break;
     case 'skill':
     case 'skills': cmdSkill(rest); break;
