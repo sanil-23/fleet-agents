@@ -13,7 +13,9 @@ User input: `$ARGUMENTS`
 ## Routing
 
 - Empty input, or `ls`/`list`/`status` → run `fleet ls`.
-- `rm`/`remove`/`done <repo> <task>` → `fleet rm <repo> <task> --branch`.
+- `rm`/`remove`/`done <repo> <task>` → `fleet rm <repo> <task> --branch`. This removes that
+  worker **and every sub-worker it spawned** (the chain): closes their panes, removes their
+  worktrees, deletes branches. (A worker can remove itself + its chain with `fleet rm --self`.)
 - `kill`/`teardown` → `fleet kill`.
 - `resume …` → `fleet resume …`.
 - Anything else → it's one or more **task launches**. For each, run the **Dispatch decision**.

@@ -115,7 +115,13 @@ function recordManagerDir(session, dir) {
 function recordTask(session, repo, task, wt) {
   recordParent(session);
   const s = loadState(session);
-  if (!s.tasks.some((t) => t.repo === repo && t.task === task)) s.tasks.push({ repo, task, wt });
+  if (!s.tasks.some((t) => t.repo === repo && t.task === task)) {
+    const entry = { repo, task, wt };
+    // If spawned from inside a worker pane, FLEET_TASK identifies the parent worker.
+    const parentTask = process.env.FLEET_TASK;
+    if (parentTask && parentTask !== `${repo}/${task}`) entry.parent = parentTask;
+    s.tasks.push(entry);
+  }
   saveState(s);
 }
 // Drop a task from whichever session(s) recorded it (rm may run from a plain terminal).
@@ -195,7 +201,7 @@ const tmuxBackend = {
       } catch {}
     }
   },
-  spawn({ wt, cmd }) {
+  spawn({ wt, cmd, taskId }) {
     this.ensureSession();
     let pane;
     if (MODE === 'window') {
@@ -204,8 +210,11 @@ const tmuxBackend = {
       pane = tmux(['split-window', '-P', '-F', '#{pane_id}', '-t', SESSION, '-c', wt, process.env.SHELL || '/bin/sh']);
       tmux(['select-layout', '-t', SESSION, 'tiled']);
     }
-    // Prefix FLEET_SESSION so the agent (and any fleet command it runs) stays on THIS session.
-    tmux(['send-keys', '-t', pane, `FLEET_SESSION=${shq(SESSION)} ${cmd}`, 'Enter']);
+    // Prefix FLEET_SESSION (keeps the agent on this session) and FLEET_TASK (so a sub-worker
+    // it spawns records THIS worker as its parent → removable as a chain).
+    const env = [`FLEET_SESSION=${shq(SESSION)}`];
+    if (taskId) env.push(`FLEET_TASK=${shq(taskId)}`);
+    tmux(['send-keys', '-t', pane, `${env.join(' ')} ${cmd}`, 'Enter']);
     return pane;
   },
   // Launch the orchestrator claude in pane 0 (if it's an idle shell). cont=true continues
@@ -333,7 +342,7 @@ function launchTask(repoArg, taskArg, prompt, baseArg, opts = {}) {
 
   const { wt, branch, base, reponame, task } = makeWorktree(repoArg, taskArg, baseArg);
   recordTask(SESSION, reponame, task, wt);
-  backend.spawn({ wt, cmd: claudeCmd(prompt) });
+  backend.spawn({ wt, cmd: claudeCmd(prompt), taskId: `${reponame}/${task}` });
   console.log(`fleet: launched ${label}[${reponame}/${task}]`);
   console.log(`       worktree: ${wt}`);
   console.log(`       branch:   ${branch} (base: ${base})`);
@@ -610,30 +619,67 @@ function cmdPrune(args) {
   else console.log(`fleet: ${dry ? 'would prune' : 'pruned'} ${dropped} stale task(s)${dry ? ' (run without --dry-run to apply)' : ''}`);
 }
 
+// Kill the tmux pane(s) whose cwd is this worktree.
+function killPaneForWt(wt) {
+  if (BACKEND !== 'tmux') return;
+  try {
+    for (const ln of tmux(['list-panes', '-a', '-F', '#{pane_id} #{pane_current_path}']).split('\n')) {
+      const i = ln.indexOf(' ');
+      if (i > 0 && ln.slice(i + 1) === wt) tmux(['kill-pane', '-t', ln.slice(0, i)]);
+    }
+  } catch {}
+}
+// All recorded tasks across every session.
+function allTasks() {
+  const out = [];
+  if (!fs.existsSync(STATE_DIR)) return out;
+  for (const f of fs.readdirSync(STATE_DIR)) {
+    if (!f.endsWith('.json')) continue;
+    for (const t of loadState(f.replace(/\.json$/, '')).tasks) out.push(t);
+  }
+  return out;
+}
+// Descendant tasks of <repo>/<task>, deepest-first (sub-workers before the worker).
+function taskDescendants(rootId, tasks) {
+  const byParent = {};
+  for (const t of tasks) if (t.parent) (byParent[t.parent] = byParent[t.parent] || []).push(t);
+  const out = [];
+  (function walk(id) { (byParent[id] || []).forEach((c) => { walk(`${c.repo}/${c.task}`); out.push(c); }); })(rootId);
+  return out;
+}
+
+// Remove a worker AND every sub-worker it spawned (chain), closing panes + worktrees.
 function cmdRm(args) {
-  if (args.length < 2) die('usage: fleet rm <repo> <task> [--branch]');
-  const [repoArg, taskArg] = args;
   const delBranch = args.includes('--branch');
-  const repo = resolveRepo(repoArg);
-  const task = slug(taskArg);
-  const wt = path.join(WT_ROOT, path.basename(repo), task);
-  if (!fs.existsSync(wt)) die(`no worktree at ${wt}`);
-  // Close the agent's tmux pane (if any) before removing its worktree.
-  if (BACKEND === 'tmux') {
-    try {
-      for (const ln of tmux(['list-panes', '-a', '-F', '#{pane_id} #{pane_current_path}']).split('\n')) {
-        const i = ln.indexOf(' ');
-        if (i > 0 && ln.slice(i + 1) === wt) tmux(['kill-pane', '-t', ln.slice(0, i)]);
-      }
-    } catch {}
+  let reponame, task;
+  if (args.includes('--self')) {
+    const id = process.env.FLEET_TASK;
+    if (!id || !id.includes('/')) die('--self requires being inside a fleet worker (FLEET_TASK unset)');
+    reponame = id.slice(0, id.indexOf('/'));
+    task = id.slice(id.indexOf('/') + 1);
+  } else {
+    const pos = args.filter((a) => !a.startsWith('-'));
+    if (pos.length < 2) die('usage: fleet rm <repo> <task> [--branch]   (or --self inside a worker)');
+    reponame = path.basename(pos[0].replace(/\/+$/, ''));
+    task = slug(pos[1]);
   }
-  git(repo, ['worktree', 'remove', wt, '--force'], { stdio: 'inherit' });
-  unrecordTaskEverywhere(path.basename(repo), task);
-  console.log(`fleet: removed worktree ${wt}`);
-  if (delBranch) {
-    try { git(repo, ['branch', '-D', task]); console.log(`fleet: deleted branch ${task}`); }
-    catch { console.log(`fleet: could not delete branch ${task}`); }
+
+  const rootId = `${reponame}/${task}`;
+  const rootWt = path.join(WT_ROOT, reponame, task);
+  const tasks = allTasks();
+  const descendants = taskDescendants(rootId, tasks); // deepest-first
+  const recorded = tasks.some((t) => `${t.repo}/${t.task}` === rootId);
+  if (!recorded && !fs.existsSync(rootWt) && !descendants.length)
+    die(`no worktree or recorded worker for ${rootId}`);
+
+  const targets = [...descendants, { repo: reponame, task, wt: rootWt }]; // children first, root last
+  for (const t of targets) {
+    killPaneForWt(t.wt);
+    removeWorktreeByPath(t.wt, t.task, delBranch);
+    unrecordTaskEverywhere(t.repo, t.task);
+    console.log(`  removed ${t.repo}/${t.task}`);
   }
+  console.log(`fleet: removed ${targets.length} worker(s)${descendants.length ? ` (incl. ${descendants.length} sub-worker(s))` : ''}${delBranch ? ' + branches' : ''}`);
 }
 
 function cmdInstallClaude() {
