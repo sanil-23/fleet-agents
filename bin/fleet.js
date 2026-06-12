@@ -112,16 +112,16 @@ function recordManagerDir(session, dir) {
   recordParent(session);
   const s = loadState(session); s.managerDir = dir; saveState(s);
 }
-function recordTask(session, repo, task, wt) {
+function recordTask(session, repo, task, wt, opts = {}) {
   recordParent(session);
   const s = loadState(session);
-  if (!s.tasks.some((t) => t.repo === repo && t.task === task)) {
-    const entry = { repo, task, wt };
-    // If spawned from inside a worker pane, FLEET_TASK identifies the parent worker.
-    const parentTask = process.env.FLEET_TASK;
-    if (parentTask && parentTask !== `${repo}/${task}`) entry.parent = parentTask;
-    s.tasks.push(entry);
-  }
+  let entry = s.tasks.find((t) => t.repo === repo && t.task === task);
+  if (!entry) { entry = { repo, task, wt }; s.tasks.push(entry); }
+  // If spawned from inside a worker pane, FLEET_TASK identifies the parent worker.
+  const parentTask = process.env.FLEET_TASK;
+  if (parentTask && parentTask !== `${repo}/${task}`) entry.parent = parentTask;
+  if (opts.paneId) entry.paneId = opts.paneId;       // for kill-by-pane (no-worktree workers share cwd)
+  if (opts.noWorktree) entry.noWorktree = true;      // its wt is the repo — never remove it
   saveState(s);
 }
 // Drop a task from whichever session(s) recorded it (rm may run from a plain terminal).
@@ -334,15 +334,18 @@ function launchTask(repoArg, taskArg, prompt, baseArg, opts = {}) {
 
   if (noWorktree) {
     const repo = resolveRepo(repoArg);
-    backend.spawn({ wt: repo, cmd: claudeCmd(prompt) });
-    console.log(`fleet: launched ${label}[${path.basename(repo)}] in repo (no worktree)`);
+    const reponame = path.basename(repo);
+    const task = slug(taskArg) || 'work';
+    const paneId = backend.spawn({ wt: repo, cmd: claudeCmd(prompt), taskId: `${reponame}/${task}` });
+    recordTask(SESSION, reponame, task, repo, { paneId, noWorktree: true });
+    console.log(`fleet: launched ${label}[${reponame}/${task}] in repo (no worktree)`);
     if (BACKEND === 'tmux' && !process.env.TMUX) console.log('       attach:   fleet attach');
     return;
   }
 
   const { wt, branch, base, reponame, task } = makeWorktree(repoArg, taskArg, baseArg);
-  recordTask(SESSION, reponame, task, wt);
-  backend.spawn({ wt, cmd: claudeCmd(prompt), taskId: `${reponame}/${task}` });
+  const paneId = backend.spawn({ wt, cmd: claudeCmd(prompt), taskId: `${reponame}/${task}` });
+  recordTask(SESSION, reponame, task, wt, { paneId });
   console.log(`fleet: launched ${label}[${reponame}/${task}]`);
   console.log(`       worktree: ${wt}`);
   console.log(`       branch:   ${branch} (base: ${base})`);
@@ -458,6 +461,9 @@ function cmdLsSessions() {
 // Remove a worktree by its path (resolve its main repo from the worktree itself).
 function removeWorktreeByPath(wt, branch, delBranch) {
   if (!fs.existsSync(wt)) return;
+  // SAFETY: only ever delete paths under WT_ROOT — never a real repo (e.g. a no-worktree
+  // task's dir IS the repo root). This guards against catastrophic fs.rmSync on a repo.
+  if (!path.resolve(wt).startsWith(path.resolve(WT_ROOT) + path.sep)) return;
   let mainRepo = null;
   try {
     const cd = execFileSync('git', ['-C', wt, 'rev-parse', '--git-common-dir'],
@@ -648,15 +654,33 @@ function taskDescendants(rootId, tasks) {
   return out;
 }
 
+// Close a worker's pane: by recorded pane id (robust for no-worktree workers that share the
+// repo cwd), else by cwd for real worktrees (unique dirs). Never guesses by cwd for
+// no-worktree workers — that would also match the manager.
+function killPane(t) {
+  if (BACKEND !== 'tmux') return;
+  if (t.paneId) { try { tmux(['kill-pane', '-t', t.paneId]); return; } catch {} }
+  if (!t.noWorktree) killPaneForWt(t.wt);
+}
+
 // Remove a worker AND every sub-worker it spawned (chain), closing panes + worktrees.
 function cmdRm(args) {
   const delBranch = args.includes('--branch');
+  const self = args.includes('--self');
   let reponame, task;
-  if (args.includes('--self')) {
+  if (self) {
     const id = process.env.FLEET_TASK;
-    if (!id || !id.includes('/')) die('--self requires being inside a fleet worker (FLEET_TASK unset)');
-    reponame = id.slice(0, id.indexOf('/'));
-    task = id.slice(id.indexOf('/') + 1);
+    if (id && id.includes('/')) {
+      reponame = id.slice(0, id.indexOf('/'));
+      task = id.slice(id.indexOf('/') + 1);
+    } else if (process.env.TMUX_PANE) {
+      // No task identity, but we can still self-destruct the current pane.
+      try { tmux(['kill-pane', '-t', process.env.TMUX_PANE]); } catch {}
+      console.log('fleet: closed current worker pane (no FLEET_TASK — chain not resolved)');
+      return;
+    } else {
+      die('--self requires being inside a fleet worker (FLEET_TASK / TMUX_PANE unset)');
+    }
   } else {
     const pos = args.filter((a) => !a.startsWith('-'));
     if (pos.length < 2) die('usage: fleet rm <repo> <task> [--branch]   (or --self inside a worker)');
@@ -667,19 +691,22 @@ function cmdRm(args) {
   const rootId = `${reponame}/${task}`;
   const rootWt = path.join(WT_ROOT, reponame, task);
   const tasks = allTasks();
+  const recordedRoot = tasks.find((t) => `${t.repo}/${t.task}` === rootId);
+  const rootEntry = recordedRoot || { repo: reponame, task, wt: rootWt };
+  // For --self, fall back to the live pane id if state didn't record one.
+  if (self && !rootEntry.paneId && process.env.TMUX_PANE) rootEntry.paneId = process.env.TMUX_PANE;
   const descendants = taskDescendants(rootId, tasks); // deepest-first
-  const recorded = tasks.some((t) => `${t.repo}/${t.task}` === rootId);
-  if (!recorded && !fs.existsSync(rootWt) && !descendants.length)
+  if (!recordedRoot && !fs.existsSync(rootWt) && !descendants.length && !rootEntry.paneId)
     die(`no worktree or recorded worker for ${rootId}`);
 
-  const targets = [...descendants, { repo: reponame, task, wt: rootWt }]; // children first, root last
+  const targets = [...descendants, rootEntry]; // children first, root last
   for (const t of targets) {
     // Clean up state + worktree BEFORE killing the pane — for `--self`, killing our own pane
     // terminates this process, so the cleanup must already be done by then.
-    removeWorktreeByPath(t.wt, t.task, delBranch);
+    if (!t.noWorktree) removeWorktreeByPath(t.wt, t.task, delBranch);
     unrecordTaskEverywhere(t.repo, t.task);
-    console.log(`  removed ${t.repo}/${t.task}`);
-    killPaneForWt(t.wt);
+    console.log(`  removed ${t.repo}/${t.task}${t.noWorktree ? ' (pane only)' : ''}`);
+    killPane(t);
   }
   console.log(`fleet: removed ${targets.length} worker(s)${descendants.length ? ` (incl. ${descendants.length} sub-worker(s))` : ''}${delBranch ? ' + branches' : ''}`);
 }
