@@ -674,10 +674,12 @@ function cmdRm(args) {
 
   const targets = [...descendants, { repo: reponame, task, wt: rootWt }]; // children first, root last
   for (const t of targets) {
-    killPaneForWt(t.wt);
+    // Clean up state + worktree BEFORE killing the pane — for `--self`, killing our own pane
+    // terminates this process, so the cleanup must already be done by then.
     removeWorktreeByPath(t.wt, t.task, delBranch);
     unrecordTaskEverywhere(t.repo, t.task);
     console.log(`  removed ${t.repo}/${t.task}`);
+    killPaneForWt(t.wt);
   }
   console.log(`fleet: removed ${targets.length} worker(s)${descendants.length ? ` (incl. ${descendants.length} sub-worker(s))` : ''}${delBranch ? ' + branches' : ''}`);
 }

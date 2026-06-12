@@ -15,7 +15,10 @@ User input: `$ARGUMENTS`
 - Empty input, or `ls`/`list`/`status` → run `fleet ls`.
 - `rm`/`remove`/`done <repo> <task>` → `fleet rm <repo> <task> --branch`. This removes that
   worker **and every sub-worker it spawned** (the chain): closes their panes, removes their
-  worktrees, deletes branches. (A worker can remove itself + its chain with `fleet rm --self`.)
+  worktrees, deletes branches.
+- `rm self` / `remove self` / "remove this worker" / "remove me" (no repo/task) → run
+  `fleet rm --self --branch`. From inside a worker this removes that worker + its sub-worker
+  chain (it reads the pane's FLEET_TASK). Only valid inside a worker pane.
 - `kill`/`teardown` → `fleet kill`.
 - `resume …` → `fleet resume …`.
 - Anything else → it's one or more **task launches**. For each, run the **Dispatch decision**.
