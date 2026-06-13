@@ -503,8 +503,9 @@ function removeOneSession(name, delBranch) {
 // Remove a session by name AND every child/sub-child session it spawned.
 function cmdRemoveSession(args) {
   const delBranch = args.includes('--branch');
+  const dry = args.includes('--dry-run') || args.includes('-n');
   const name = args.find((a) => !a.startsWith('-'));
-  if (!name) die('usage: fleet sessions rm <session> [--branch]');
+  if (!name) die('usage: fleet sessions rm <session> [--branch] [--dry-run]');
   const exists = fs.existsSync(statePath(name)) || (BACKEND === 'tmux' && tmuxHasName(name));
   if (!exists) die(`no session '${name}' (see: fleet sessions)`);
 
@@ -513,6 +514,11 @@ function cmdRemoveSession(args) {
   const order = [];
   (function walk(n) { (children[n] || []).forEach(walk); order.push(n); })(name);
 
+  if (dry) {
+    console.log(`fleet: would remove session '${name}'${order.length > 1 ? ` + ${order.length - 1} descendant session(s)` : ''}:`);
+    for (const s of order) console.log(`    - ${s} (${loadState(s).tasks.length} worktree(s))`);
+    return;
+  }
   console.log(`fleet: removing session '${name}'${order.length > 1 ? ` + ${order.length - 1} descendant session(s)` : ''}`);
   for (const s of order) removeOneSession(s, delBranch);
 }
@@ -521,6 +527,74 @@ function cmdSessions(args) {
   const sub = args[0];
   if (sub === 'rm' || sub === 'remove') return cmdRemoveSession(args.slice(1));
   return cmdLsSessions();
+}
+
+// Set of currently-live tmux pane ids (for status).
+function livePaneIds() {
+  if (BACKEND !== 'tmux') return new Set();
+  try { return new Set(tmux(['list-panes', '-a', '-F', '#{pane_id}']).split('\n').filter(Boolean)); }
+  catch { return new Set(); }
+}
+
+// One-glance view of a session: manager + worker tree (with live/dead, no-worktree markers).
+function cmdStatus(args) {
+  const target = args.find((a) => !a.startsWith('-'))
+    || process.env.FLEET_SESSION || mostRecentManagerSession() || SESSION;
+  if (!fs.existsSync(statePath(target)) && !(BACKEND === 'tmux' && tmuxHasName(target))) {
+    console.log(`fleet: no session '${target}' (see: fleet sessions)`);
+    return;
+  }
+  const s = loadState(target);
+  const live = BACKEND === 'tmux' && tmuxHasName(target);
+  const panes = livePaneIds();
+  console.log(`session: ${target}   [${live ? '● live' : '○ saved (resume to reopen)'}]`);
+  console.log(`manager: ${s.managerDir || '(none)'}`);
+
+  if (!s.tasks.length) { console.log('workers: (none)'); }
+  else {
+    console.log(`workers (${s.tasks.length}):`);
+    const byParent = {};
+    for (const t of s.tasks) (byParent[t.parent || ''] = byParent[t.parent || ''] || []).push(t);
+    const walk = (parentId, depth) => {
+      for (const t of byParent[parentId] || []) {
+        const id = `${t.repo}/${t.task}`;
+        const tags = [];
+        if (t.noWorktree) tags.push('no-worktree');
+        if (live && t.paneId) tags.push(panes.has(t.paneId) ? 'running' : 'pane closed');
+        console.log(`  ${'  '.repeat(depth)}• ${id}${tags.length ? `  [${tags.join(', ')}]` : ''}`);
+        walk(id, depth + 1);
+      }
+    };
+    walk('', 0);
+  }
+
+  const others = fs.existsSync(STATE_DIR)
+    ? fs.readdirSync(STATE_DIR).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, '')).filter((n) => n !== target)
+    : [];
+  if (others.length) console.log(`\nother sessions: ${others.join(', ')}   (fleet sessions)`);
+}
+
+// Check prerequisites and report.
+function cmdDoctor() {
+  const row = (label, ok, hint) => console.log(`  ${ok ? '✓' : '✗'} ${label}${ok ? '' : `   — ${hint}`}`);
+  console.log('fleet doctor\n');
+  row(`node ${process.version}`, true);
+  row('git', have('git'), 'install git');
+  row('claude CLI', have('claude'), 'install the Claude Code CLI and put it on PATH');
+  if (process.platform !== 'win32') row('tmux', hasTmux(), 'install tmux, or set FLEET_BACKEND=windows');
+  row('gh  (for fleet pr …)', have('gh'), 'install the GitHub CLI');
+  row('jq  (for fleet pr …)', have('jq'), 'install jq');
+  if (process.platform === 'darwin') row('caffeinate', fs.existsSync('/usr/bin/caffeinate'), 'built-in on macOS — unexpected if missing');
+  row('/fleet command installed', fs.existsSync(path.join(HOME, '.claude', 'commands', 'fleet.md')), 'run: fleet install-claude');
+  console.log(`\nbackend: ${BACKEND}   projects: ${PROJECTS_ROOT}   worktrees: ${WT_ROOT}   session: ${SESSION}`);
+}
+
+// PR review toolkit, namespaced: `fleet pr <sync|review|fix|coverage|merge> <pr> [...]`.
+function cmdPr(args) {
+  const sub = args[0];
+  const map = { sync: 'sync.sh', review: 'review.sh', fix: 'fix.sh', coverage: 'coverage.sh', merge: 'merge.sh', approve: 'merge.sh' };
+  if (!sub || !map[sub]) die('usage: fleet pr <sync|review|fix|coverage|merge> <pr> [extra]');
+  cmdReview(map[sub], args.slice(1));
 }
 
 function cmdLs(args = []) {
@@ -666,6 +740,7 @@ function killPane(t) {
 // Remove a worker AND every sub-worker it spawned (chain), closing panes + worktrees.
 function cmdRm(args) {
   const delBranch = args.includes('--branch');
+  const dry = args.includes('--dry-run') || args.includes('-n');
   const self = args.includes('--self');
   let reponame, task;
   if (self) {
@@ -700,6 +775,11 @@ function cmdRm(args) {
     die(`no worktree or recorded worker for ${rootId}`);
 
   const targets = [...descendants, rootEntry]; // children first, root last
+  if (dry) {
+    console.log(`fleet: would remove ${targets.length} worker(s)${descendants.length ? ` (incl. ${descendants.length} sub-worker(s))` : ''}${delBranch ? ' + branches' : ''}:`);
+    for (const t of targets) console.log(`    - ${t.repo}/${t.task}${t.noWorktree ? ' (pane only)' : ''}`);
+    return;
+  }
   for (const t of targets) {
     // Clean up state + worktree BEFORE killing the pane — for `--self`, killing our own pane
     // terminates this process, so the cleanup must already be done by then.
@@ -786,37 +866,48 @@ const HELP = `fleet — run multiple Claude Code agents in parallel, each in its
 
 Backend: ${BACKEND}${BACKEND === 'tmux' ? ' (manager + worker panes in one tmux session)' : ' (each agent in its own terminal window)'}
 
-Usage:
-  fleet manager [dir] [--name X] [--window]          open an orchestrator claude (rooted at dir, default: cwd)
-                                                     ( --window: new window in the CURRENT tmux session instead of its own )
-  fleet add <repo> <task> "<prompt>|<file.md>" [base]   create worktree + launch an agent
-  fleet research <repo> <task> "<issue|file.md>" [base]  launch a read-only investigation agent (your debug method)
-  ( add/research take --no-worktree to run in the repo itself; --skill <name> prepends a skill template )
-  fleet skill ls | add <name> <file.md> | rm <name> | show <name>   manage reusable skill prompts
-  ( --name/-n on manager/add/attach/kill selects a session — run several named managers at once )
-  fleet ls                                            list active worktrees
-  fleet resume [session] [--dry-run]                 rebuild a session (manager + panes); no arg = most recent manager
-  fleet sessions   |   fleet ls --sessions           list all sessions (manager, tasks, live panes)
-  fleet sessions rm <session> [--branch]             remove a session + ALL its child/sub-child sessions (kill + worktrees)
-  fleet prune [session] [--dry-run]                  drop recorded tasks whose worktree is gone
-  fleet rm  <repo> <task> [--branch]                  remove worktree (+branch with --branch)
-  fleet attach                                        attach to the fleet tmux session (tmux backend)
-  fleet kill                                          kill the fleet session (tmux backend)
-  fleet install-claude                                install the /fleet slash command for Claude Code
-  fleet help                                          this help
+SESSIONS  (a tmux session = a manager + its worker panes)
+  fleet manager [dir] [--name X] [--window]   open an orchestrator claude (rooted at dir; default cwd)
+                                              --window: new window in the CURRENT tmux session
+  fleet attach [--name X]                     attach to a session
+  fleet status [session]                      one-glance view: manager + worker tree, live/saved
+  fleet sessions                              list all sessions (manager, tasks, live panes)
+  fleet resume [session] [--dry-run]          rebuild a session (manager + workers, conversations continued)
+  fleet kill [--name X]                       stop a session's tmux (keeps worktrees + state → resumable)
 
-PR review (toolkit — needs git + gh + jq; run in the repo or pass -C <repo>):
-  fleet sync     <pr>                                 checkout PR as pr/<num>, merge main, wire push
-  fleet review   <pr> [extra-prompt]                  sync + CodeRabbit-style review agent
-  fleet fix      <pr> [extra-prompt]                  sync + review-and-fix agent (commit & push)
-  fleet coverage <pr> [extra-prompt]                  sync + fix the coverage gate
-  fleet approve  <pr> [--squash|--merge|--rebase] [--dry-run] [--summary-llm <tool>]
-                                                      gate 8 checks, then squash-merge via gh
-  ( these open a new tmux pane by default — add --here to run in the foreground; -C/--repo <dir> sets the repo )
+LAUNCH WORK  (spawns a worker pane in its own worktree)
+  fleet add <repo> <task> "<prompt>|<file.md>" [base] [--skill NAME] [--no-worktree]
+  fleet research <repo> <task> "<issue|file.md>" [base]   read-only investigation (= --skill research)
+      ( default repo '.' = current repo. --no-worktree runs in the repo itself, no branch. )
+
+SKILLS  (named prompt templates the worker is seeded with)
+  fleet skill ls | add <name> <file.md> | rm <name> | show <name>
+
+CLEAN UP
+  fleet rm <repo> <task> [--branch] [--dry-run]   remove a worker + every sub-worker it spawned
+  fleet rm --self [--branch]                       (inside a worker) remove itself + its chain
+  fleet sessions rm <session> [--branch] [--dry-run]   remove a session + ALL child sessions
+  fleet prune [session] [--dry-run]                drop recorded tasks whose worktree is gone
+
+PR REVIEW  (needs git + gh + jq; run in the repo or pass -C <repo>; open a pane, --here for foreground)
+  fleet pr sync     <pr>                       checkout PR as pr/<num>, merge base, wire push
+  fleet pr review   <pr> [extra]               CodeRabbit-style review agent
+  fleet pr fix      <pr> [extra]               review-and-fix agent (commit & push)
+  fleet pr coverage <pr> [extra]               fix the coverage gate
+  fleet pr merge    <pr> [--squash|--merge|--rebase] [--dry-run] [--summary-llm <tool>]
+
+SETUP
+  fleet install-claude                         install the /fleet slash command for Claude Code
+  fleet doctor                                 check prerequisites (tmux/gh/jq/claude/…)
+  fleet help
+
+From inside Claude:  /fleet <prompt>   — the manager picks a skill + a mode (once/loop/goal) and dispatches.
 
 Examples:
-  fleet add food-llm fix-parser "Fix the CSV parser crash and add a test"
-  fleet add food-llm migrate ./tasks/migrate-db.md            # task loaded from a markdown file
+  fleet manager ~/code/myapp
+  fleet add . fix-parser "Fix the CSV parser crash and add a test"
+  fleet add . migrate ./tasks/migrate-db.md
+  fleet research . why-slow "trace why the dashboard query is slow" --no-worktree
 
 Env:
   FLEET_BACKEND       tmux | windows                  (default: auto — tmux if available, else windows)
@@ -826,6 +917,7 @@ Env:
   FLEET_SESSION       tmux session name                (default: fleet)
   FLEET_CLAUDE_FLAGS  flags for launched claude        (default: --dangerously-skip-permissions)
   FLEET_NO_CAFFEINATE=1  don't hold a macOS caffeinate assertion while the session is alive`;
+
 
 // ----------------------------------------------------------------------------- dispatch
 const SESSION_CMDS = new Set(['manager', 'up', 'add', 'research', 'investigate', 'attach', 'kill']);
@@ -902,12 +994,18 @@ function main() {
     case 'remove': cmdRm(rest); break;
     case 'attach': backend.attach(); break;
     case 'kill': backend.kill(); break;
-    case 'sync': cmdReview('sync.sh', rest); break;
-    case 'review': cmdReview('review.sh', rest); break;
-    case 'fix': cmdReview('fix.sh', rest); break;
-    case 'coverage': cmdReview('coverage.sh', rest); break;
+    case 'pr': cmdPr(rest); break;
+    // deprecated top-level PR commands — prefer `fleet pr <cmd>`
+    case 'sync':
+    case 'review':
+    case 'fix':
+    case 'coverage':
     case 'approve':
-    case 'merge': cmdReview('merge.sh', rest); break;
+    case 'merge':
+      console.error(`fleet: '${cmd}' is now 'fleet pr ${cmd === 'approve' ? 'merge' : cmd}' (running anyway)`);
+      cmdPr([cmd, ...rest]); break;
+    case 'status': cmdStatus(rest); break;
+    case 'doctor': cmdDoctor(); break;
     case 'install-claude': cmdInstallClaude(); break;
     case undefined:
     case 'help':
