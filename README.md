@@ -83,7 +83,9 @@ fleet kill    --name xyz         # stop the session (keeps the work; resumable)
 ```
 
 From inside Claude you can also say `/fleet ls`, `/fleet status`, or `/fleet rm <repo> <task>`
-(removes a worker and anything it spawned), and `/fleet rm self` from inside a worker.
+(removes a worker and anything it spawned). `/fleet rm self` removes the current pane and its
+chain — from a worker, that worker + its sub-workers; **from the manager, the whole session**
+(manager + all its workers).
 
 Everything else — manual `fleet add`, custom skills, the `fleet pr` review/fix/merge toolkit —
 is in **`fleet help`**.

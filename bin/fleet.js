@@ -493,11 +493,13 @@ function sessionChildrenMap() {
 }
 
 function removeOneSession(name, delBranch) {
-  if (BACKEND === 'tmux') { try { execFileSync('tmux', ['kill-session', '-t', name], { stdio: 'ignore' }); } catch {} }
+  // Clean up worktrees + state BEFORE killing the tmux session — if a manager removes its own
+  // session, killing it terminates this process, so cleanup must already be done.
   const s = loadState(name);
   for (const t of s.tasks) removeWorktreeByPath(t.wt, t.task, delBranch);
   try { fs.unlinkSync(statePath(name)); } catch {}
-  console.log(`  removed session '${name}' — killed + ${s.tasks.length} worktree(s)${delBranch ? ' + branches' : ''}`);
+  console.log(`  removed session '${name}' — ${s.tasks.length} worktree(s)${delBranch ? ' + branches' : ''}, session killed`);
+  if (BACKEND === 'tmux') { try { execFileSync('tmux', ['kill-session', '-t', name], { stdio: 'ignore' }); } catch {} }
 }
 
 // Remove a session by name AND every child/sub-child session it spawned.
@@ -746,15 +748,25 @@ function cmdRm(args) {
   if (self) {
     const id = process.env.FLEET_TASK;
     if (id && id.includes('/')) {
+      // Inside a worker → remove this worker + every sub-worker it spawned.
       reponame = id.slice(0, id.indexOf('/'));
       task = id.slice(id.indexOf('/') + 1);
+    } else if (process.env.FLEET_SESSION) {
+      // No worker identity → we're the manager (pane 0). "self" = the whole session it runs:
+      // the manager + every worker it generated (and any child sessions).
+      const sess = process.env.FLEET_SESSION;
+      console.log(`fleet: 'self' from the manager → removing session '${sess}' (manager + all its workers)`);
+      const pass = [sess];
+      if (delBranch) pass.push('--branch');
+      if (dry) pass.push('--dry-run');
+      cmdRemoveSession(pass);
+      return;
     } else if (process.env.TMUX_PANE) {
-      // No task identity, but we can still self-destruct the current pane.
       try { tmux(['kill-pane', '-t', process.env.TMUX_PANE]); } catch {}
-      console.log('fleet: closed current worker pane (no FLEET_TASK — chain not resolved)');
+      console.log('fleet: closed current pane (no FLEET_TASK/FLEET_SESSION — chain not resolved)');
       return;
     } else {
-      die('--self requires being inside a fleet worker (FLEET_TASK / TMUX_PANE unset)');
+      die('--self requires being inside a fleet session');
     }
   } else {
     const pos = args.filter((a) => !a.startsWith('-'));
@@ -885,7 +897,8 @@ SKILLS  (named prompt templates the worker is seeded with)
 
 CLEAN UP
   fleet rm <repo> <task> [--branch] [--dry-run]   remove a worker + every sub-worker it spawned
-  fleet rm --self [--branch]                       (inside a worker) remove itself + its chain
+  fleet rm --self [--branch]                       remove self + chain — worker: it + sub-workers;
+                                                   manager: the whole session (manager + all workers)
   fleet sessions rm <session> [--branch] [--dry-run]   remove a session + ALL child sessions
   fleet prune [session] [--dry-run]                drop recorded tasks whose worktree is gone
 
