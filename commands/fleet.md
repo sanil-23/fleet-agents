@@ -12,7 +12,8 @@ User input: `$ARGUMENTS`
 
 ## Routing
 
-- Empty input, or `ls`/`list`/`status` → run `fleet ls`.
+- Empty input or `ls`/`list` → `fleet ls`.  `sessions`/`list-sessions` → `fleet list-sessions`
+  (tree of all sessions + their tasks).  `status [name]` → `fleet status [name]`.
 - `rm`/`remove`/`done <name>` → `fleet rm <name>`. `<name>` is a **task name** or a session name
   (fleet resolves it). By default this removes the target **and every sub-worker/child it
   spawned** (the chain): closes panes, removes worktrees, **and deletes branches**. Add

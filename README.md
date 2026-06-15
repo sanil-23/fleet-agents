@@ -80,7 +80,7 @@ The manager tells you what it chose. Want to force a choice? Just name it:
 ```bash
 fleet manager --name xyz [dir]   # start/open a manager
 fleet attach  --name xyz         # jump into it
-fleet sessions                   # tree of everything: managers, their tasks (by name), sub-tasks, child sessions
+fleet list-sessions              # tree of everything: managers, their tasks (by name), sub-tasks, child sessions
 fleet status  [xyz]              # one session in detail: manager + worker tree
 fleet resume  [xyz]              # resume/continue a manager + its workers (claude --continue);
                                  #   bare `fleet resume` continues the most recent manager.
@@ -90,7 +90,7 @@ fleet kill    --name xyz         # stop the session (keeps the work; resumable)
 
 **Resume after a detach, kill, or reboot:** `fleet resume xyz` rebuilds session *xyz* — the
 manager pane plus every worker, each continuing its previous conversation — **and drops you
-into it** (so it doubles as `fleet attach`). Use `fleet sessions` to see the names; `fleet
+into it** (so it doubles as `fleet attach`). Use `fleet list-sessions` to see the names; `fleet
 resume` with no name picks the most recently-active one.
 
 **Removing things** — `fleet rm <name>` removes **by name**: a task name, a session name, or

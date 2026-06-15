@@ -459,9 +459,9 @@ function cmdSkill(args) {
 // A session may have no manager — managers are just pane 0 of a session, when present.
 // Tree of ALL sessions: parent→child chains nested, orphans/roots at the top level.
 function cmdLsSessions() {
-  if (!fs.existsSync(STATE_DIR)) { console.log('no fleet sessions recorded'); return; }
+  if (!fs.existsSync(STATE_DIR)) { console.log('no sessions recorded'); return; }
   const names = fs.readdirSync(STATE_DIR).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, ''));
-  if (!names.length) { console.log('no fleet sessions recorded'); return; }
+  if (!names.length) { console.log('no sessions recorded'); return; }
 
   const set = new Set(names);
   const states = {};
@@ -513,7 +513,7 @@ function cmdLsSessions() {
     for (const c of (children[n] || []).sort()) walk(c, depth + 1); // then child sessions
   };
 
-  console.log('fleet sessions  (● live session · ○ saved · • task):');
+  console.log('fleet list-sessions  (● live session · ○ saved · • task):');
   for (const r of roots) walk(r, 0);
   for (const n of names.sort()) if (!seen.has(n)) walk(n, 0); // any cycle stragglers
 }
@@ -566,7 +566,7 @@ function removeOneSession(name, delBranch) {
 // Remove a session: kills it + its worktrees, and (unless noSpawn) all child/sub-child sessions.
 function rmSession(name, { delBranch, dry, noSpawn } = {}) {
   const exists = fs.existsSync(statePath(name)) || (BACKEND === 'tmux' && tmuxHasName(name));
-  if (!exists) die(`no session '${name}' (see: fleet sessions)`);
+  if (!exists) die(`no session '${name}' (see: fleet list-sessions)`);
   const children = sessionChildrenMap();
   const order = [];
   (function walk(n) { if (!noSpawn) (children[n] || []).forEach(walk); order.push(n); })(name);
@@ -582,7 +582,7 @@ function rmSession(name, { delBranch, dry, noSpawn } = {}) {
 
 function cmdRemoveSession(args) {
   const name = args.find((a) => !a.startsWith('-'));
-  if (!name) die('usage: fleet sessions rm <session> [--no-branch] [--no-spawn] [--dry-run]');
+  if (!name) die('usage: fleet rm <session> [--no-branch] [--no-spawn] [--dry-run]');
   rmSession(name, {
     delBranch: !args.includes('--no-branch'),   // default: delete branches too
     dry: args.includes('--dry-run') || args.includes('-n'),
@@ -608,7 +608,7 @@ function cmdStatus(args) {
   const target = args.find((a) => !a.startsWith('-'))
     || process.env.FLEET_SESSION || mostRecentManagerSession() || SESSION;
   if (!fs.existsSync(statePath(target)) && !(BACKEND === 'tmux' && tmuxHasName(target))) {
-    console.log(`fleet: no session '${target}' (see: fleet sessions)`);
+    console.log(`fleet: no session '${target}' (see: fleet list-sessions)`);
     return;
   }
   const s = loadState(target);
@@ -638,7 +638,7 @@ function cmdStatus(args) {
   const others = fs.existsSync(STATE_DIR)
     ? fs.readdirSync(STATE_DIR).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, '')).filter((n) => n !== target)
     : [];
-  if (others.length) console.log(`\nother sessions: ${others.join(', ')}   (fleet sessions)`);
+  if (others.length) console.log(`\nother sessions: ${others.join(', ')}   (fleet list-sessions)`);
 }
 
 // Check prerequisites and report.
@@ -887,7 +887,7 @@ function cmdRm(args) {
     console.error(`fleet: '${name}' is both a task and a session — use ${taskMatches[0].repo}/${taskSlug} for the task.`);
     return process.exit(1);
   }
-  die(`no task or session named '${name}' (see: fleet sessions)`);
+  die(`no task or session named '${name}' (see: fleet list-sessions)`);
 }
 
 function cmdInstallClaude() {
@@ -970,7 +970,7 @@ SESSIONS  (a tmux session = a manager + its worker panes)
                                               --window: new window in the CURRENT tmux session
   fleet attach [--name X]                     attach to a session
   fleet status [session]                      one-glance view: manager + worker tree, live/saved
-  fleet sessions                              tree of ALL sessions (parent→child chains, orphans flagged)
+  fleet list-sessions                         tree of everything: sessions, their tasks, sub-tasks, child sessions
   fleet resume [session] [--dry-run]          rebuild a session (manager + workers, conversations continued)
   fleet kill [--name X]                       stop a session's tmux (keeps worktrees + state → resumable)
 
@@ -1074,7 +1074,9 @@ function main() {
     case 'investigate': cmdResearch(rest); break;
     case 'ls':
     case 'list': cmdLs(rest); break;
-    case 'sessions': cmdSessions(rest); break;
+    case 'list-sessions':
+    case 'ls-sessions': cmdLsSessions(); break;
+    case 'sessions': cmdSessions(rest); break; // alias (also handles `sessions rm`)
     case 'prune': cmdPrune(rest); break;
     case 'skill':
     case 'skills': cmdSkill(rest); break;
