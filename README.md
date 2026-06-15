@@ -89,8 +89,9 @@ fleet kill    --name xyz         # stop the session (keeps the work; resumable)
 ```
 
 **Resume after a detach, kill, or reboot:** `fleet resume xyz` rebuilds session *xyz* — the
-manager pane plus every worker — and each agent continues its previous conversation. Use
-`fleet sessions` to see the names; `fleet resume` with no name picks the most recently-active one.
+manager pane plus every worker, each continuing its previous conversation — **and drops you
+into it** (so it doubles as `fleet attach`). Use `fleet sessions` to see the names; `fleet
+resume` with no name picks the most recently-active one.
 
 From inside Claude you can also say `/fleet ls`, `/fleet status`, or `/fleet rm <repo> <task>`
 (removes a worker and anything it spawned). `/fleet rm self` removes the current pane and its

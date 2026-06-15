@@ -691,7 +691,7 @@ function cmdResume(args) {
       console.log(`fleet: resumed ${t.repo}/${t.task}`);
       spawned++;
     }
-    console.log(`fleet: session '${SESSION}' ${alreadyLive ? 'already live' : 'restored'} — ${spawned} resumed${skipped ? `, ${skipped} already running` : ''} — fleet attach to watch`);
+    console.log(`fleet: session '${SESSION}' ${alreadyLive ? 'already live' : 'restored'} — ${spawned} resumed${skipped ? `, ${skipped} already running` : ''} — attaching…`);
     tmuxBackend.attach();
   } else {
     for (const t of tasks) {
