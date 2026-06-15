@@ -13,10 +13,11 @@ User input: `$ARGUMENTS`
 ## Routing
 
 - Empty input, or `ls`/`list`/`status` → run `fleet ls`.
-- `rm`/`remove`/`done <repo> <task>` (or a session name) → `fleet rm <target>`. By default this
-  removes the target **and every sub-worker/child it spawned** (the chain): closes panes,
-  removes worktrees, **and deletes branches**. Add `--no-branch` to keep branches, `--no-spawn`
-  to remove only the target.
+- `rm`/`remove`/`done <name>` → `fleet rm <name>`. `<name>` is a **task name** or a session name
+  (fleet resolves it). By default this removes the target **and every sub-worker/child it
+  spawned** (the chain): closes panes, removes worktrees, **and deletes branches**. Add
+  `--no-branch` to keep branches, `--no-spawn` to remove only the target. (If a task name is
+  duplicated across repos, qualify it as `<repo>/<task>`.)
 - `rm self` / "remove this worker" / "kill me and my workers" → `fleet rm --self`. From a
   **worker** it removes that worker + its sub-workers; from the **manager** it removes the WHOLE
   session (manager + all workers). Branches deleted by default (use `--no-branch` to keep).

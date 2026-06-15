@@ -474,23 +474,46 @@ function cmdLsSessions() {
   // Roots = no parent, or a parent that no longer exists (orphaned).
   const roots = names.filter((n) => !states[n].parent || !set.has(states[n].parent)).sort();
 
-  const line = (n, depth) => {
+  const panes = livePaneIds();
+
+  // Render a session's tasks (workers) as a tree: root tasks, with sub-workers nested.
+  const printTasks = (n, depth) => {
+    const s = states[n];
+    const ids = new Set(s.tasks.map((t) => `${t.repo}/${t.task}`));
+    const byParent = {};
+    for (const t of s.tasks) {
+      const k = (t.parent && ids.has(t.parent)) ? t.parent : '__root__';
+      (byParent[k] = byParent[k] || []).push(t);
+    }
+    const walkTask = (key, d) => {
+      for (const t of byParent[key] || []) {
+        const tags = [t.repo];
+        if (t.noWorktree) tags.push('in-repo');
+        if (panes.size && t.paneId && !panes.has(t.paneId)) tags.push('closed');
+        console.log(`  ${'  '.repeat(d)}• ${t.task}  (${tags.join(' · ')})`);
+        walkTask(`${t.repo}/${t.task}`, d + 1);
+      }
+    };
+    walkTask('__root__', depth);
+  };
+
+  const sessionLine = (n, depth) => {
     const s = states[n];
     const live = BACKEND === 'tmux' && tmuxHasName(n);
-    let panes = '';
-    if (live) { try { panes = `  panes:${tmux(['list-panes', '-s', '-t', n, '-F', 'x']).split('\n').filter(Boolean).length}`; } catch {} }
     const mgr = s.managerDir ? path.basename(s.managerDir) : 'no manager';
     const orphan = s.parent && !set.has(s.parent) ? `  ⚠ orphan (parent '${s.parent}' gone)` : '';
-    console.log(`  ${'  '.repeat(depth)}${live ? '●' : '○'} ${n}   manager:${mgr}  tasks:${s.tasks.length}${panes}${orphan}`);
+    console.log(`  ${'  '.repeat(depth)}${live ? '●' : '○'} ${n}   manager:${mgr}  (${s.tasks.length} task${s.tasks.length === 1 ? '' : 's'})${orphan}`);
   };
+
   const seen = new Set();
   const walk = (n, depth) => {
     if (seen.has(n)) return; seen.add(n);
-    line(n, depth);
-    for (const c of (children[n] || []).sort()) walk(c, depth + 1);
+    sessionLine(n, depth);
+    printTasks(n, depth + 1);                               // tasks nested under the session
+    for (const c of (children[n] || []).sort()) walk(c, depth + 1); // then child sessions
   };
 
-  console.log('fleet sessions  (● live · ○ saved · indent = spawned-by):');
+  console.log('fleet sessions  (● live session · ○ saved · • task):');
   for (const r of roots) walk(r, 0);
   for (const n of names.sort()) if (!seen.has(n)) walk(n, 0); // any cycle stragglers
 }
@@ -842,14 +865,29 @@ function cmdRm(args) {
     return die('--self requires being inside a fleet session');
   }
 
-  if (pos.length >= 2) return rmWorker(path.basename(pos[0].replace(/\/+$/, '')), slug(pos[1]), opts);
-  if (pos.length === 1) {
-    const a = pos[0];
-    if (a.includes('/')) { const i = a.indexOf('/'); return rmWorker(path.basename(a.slice(0, i)), slug(a.slice(i + 1)), opts); }
-    if (fs.existsSync(statePath(a)) || (BACKEND === 'tmux' && tmuxHasName(a))) return rmSession(a, opts);
-    return die(`'${a}' is not a known session — for a worker use: fleet rm <repo> <task>`);
+  if (!pos.length) die('usage: fleet rm <name | repo/task | session | --self>   [--no-spawn] [--no-branch] [--dry-run]');
+  const name = pos[0];
+
+  // Explicit repo/task qualifier (only needed to disambiguate a duplicated task name).
+  if (name.includes('/')) { const i = name.indexOf('/'); return rmWorker(path.basename(name.slice(0, i)), slug(name.slice(i + 1)), opts); }
+
+  // Resolve a bare name → a task (by its name, across all sessions) or a session.
+  const taskSlug = slug(name);
+  const taskMatches = allTasks().filter((t) => t.task === taskSlug);
+  const isSession = fs.existsSync(statePath(name)) || (BACKEND === 'tmux' && tmuxHasName(name));
+
+  if (taskMatches.length === 1 && !isSession) return rmWorker(taskMatches[0].repo, taskMatches[0].task, opts);
+  if (isSession && taskMatches.length === 0) return rmSession(name, opts);
+  if (taskMatches.length > 1) {
+    console.error(`fleet: '${name}' matches several tasks — qualify with <repo>/${taskSlug}:`);
+    for (const t of taskMatches) console.error(`    - ${t.repo}/${t.task}`);
+    return process.exit(1);
   }
-  die('usage: fleet rm <repo> <task> | <repo>/<task> | <session> | --self   [--no-spawn] [--no-branch] [--dry-run]');
+  if (taskMatches.length === 1 && isSession) {
+    console.error(`fleet: '${name}' is both a task and a session — use ${taskMatches[0].repo}/${taskSlug} for the task.`);
+    return process.exit(1);
+  }
+  die(`no task or session named '${name}' (see: fleet sessions)`);
 }
 
 function cmdInstallClaude() {
@@ -945,11 +983,10 @@ SKILLS  (named prompt templates the worker is seeded with)
   fleet skill ls | add <name> <file.md> | rm <name> | show <name>
 
 CLEAN UP
-  fleet rm <repo> <task> | <session> | --self      unified remove. Default: removes the spawned
-      [--no-spawn] [--no-branch] [--dry-run]       chain + deletes branches. Worker → it + sub-workers;
-                                                   session (or manager --self) → it + child sessions.
-                                                   --no-spawn: target only.  --no-branch: keep branches.
-  fleet sessions rm <session> [--no-spawn] [--no-branch] [--dry-run]   (same, for a session by name)
+  fleet rm <name> | --self                         remove a task or session BY NAME. Default: removes
+      [--no-spawn] [--no-branch] [--dry-run]       the spawned chain + deletes branches. <name> is a
+                                                   task name (or <repo>/<task> if duplicated), a session,
+                                                   or --self. --no-spawn: target only. --no-branch: keep.
   fleet prune [session] [--dry-run]                drop recorded tasks whose worktree is gone
 
 PR REVIEW  (needs git + gh + jq; run in the repo or pass -C <repo>; open a pane, --here for foreground)

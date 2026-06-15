@@ -80,7 +80,7 @@ The manager tells you what it chose. Want to force a choice? Just name it:
 ```bash
 fleet manager --name xyz [dir]   # start/open a manager
 fleet attach  --name xyz         # jump into it
-fleet sessions                   # list all managers/sessions (manager dir, workers, live/saved)
+fleet sessions                   # tree of everything: managers, their tasks (by name), sub-tasks, child sessions
 fleet status  [xyz]              # one session in detail: manager + worker tree
 fleet resume  [xyz]              # resume/continue a manager + its workers (claude --continue);
                                  #   bare `fleet resume` continues the most recent manager.
@@ -93,12 +93,12 @@ manager pane plus every worker, each continuing its previous conversation — **
 into it** (so it doubles as `fleet attach`). Use `fleet sessions` to see the names; `fleet
 resume` with no name picks the most recently-active one.
 
-**Removing things** — `fleet rm <target>` is unified: the target is a worker (`<repo> <task>`),
-a session name, or `--self`. By default it removes the **whole chain it spawned** and **deletes
-the branches** (`--no-branch` keeps them, `--no-spawn` removes only the target, `--dry-run`
-previews). `fleet rm --self` from a worker removes that worker + its sub-workers; from the
-manager it removes the whole session. Same from inside Claude: `/fleet rm <repo> <task>`,
-`/fleet rm self`.
+**Removing things** — `fleet rm <name>` removes **by name**: a task name, a session name, or
+`--self` (no `<repo> <task>` needed; use `<repo>/<task>` only to disambiguate a duplicated task
+name). By default it removes the **whole chain it spawned** and **deletes the branches**
+(`--no-branch` keeps them, `--no-spawn` removes only the target, `--dry-run` previews). `fleet
+rm --self` from a worker removes that worker + its sub-workers; from the manager it removes the
+whole session. Same from inside Claude: `/fleet rm <name>`, `/fleet rm self`.
 
 Everything else — manual `fleet add`, custom skills, the `fleet pr` review/fix/merge toolkit —
 is in **`fleet help`**.
