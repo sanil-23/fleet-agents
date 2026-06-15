@@ -77,10 +77,17 @@ The manager tells you what it chose. Want to force a choice? Just name it:
 ```bash
 fleet manager --name xyz [dir]   # start/open a manager
 fleet attach  --name xyz         # jump into it
-fleet status  [xyz]              # what's running: manager + worker tree
-fleet resume  [xyz]              # rebuild after a reboot (agents continue where they left off)
+fleet sessions                   # list all managers/sessions (manager dir, workers, live/saved)
+fleet status  [xyz]              # one session in detail: manager + worker tree
+fleet resume  [xyz]              # resume/continue a manager + its workers (claude --continue);
+                                 #   bare `fleet resume` continues the most recent manager.
+                                 #   already-live sessions aren't duplicated; only missing panes are filled.
 fleet kill    --name xyz         # stop the session (keeps the work; resumable)
 ```
+
+**Resume after a detach, kill, or reboot:** `fleet resume xyz` rebuilds session *xyz* — the
+manager pane plus every worker — and each agent continues its previous conversation. Use
+`fleet sessions` to see the names; `fleet resume` with no name picks the most recently-active one.
 
 From inside Claude you can also say `/fleet ls`, `/fleet status`, or `/fleet rm <repo> <task>`
 (removes a worker and anything it spawned). `/fleet rm self` removes the current pane and its
