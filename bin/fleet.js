@@ -457,22 +457,42 @@ function cmdSkill(args) {
 
 // List all fleet SESSIONS (the containers), with their manager (if any) + task/pane counts.
 // A session may have no manager — managers are just pane 0 of a session, when present.
+// Tree of ALL sessions: parent→child chains nested, orphans/roots at the top level.
 function cmdLsSessions() {
   if (!fs.existsSync(STATE_DIR)) { console.log('no fleet sessions recorded'); return; }
   const names = fs.readdirSync(STATE_DIR).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, ''));
   if (!names.length) { console.log('no fleet sessions recorded'); return; }
-  console.log('  SESSION              STATE   MANAGER                TASKS  LIVE-PANES');
-  for (const name of names.sort()) {
-    const s = loadState(name);
-    const live = BACKEND === 'tmux' && tmuxHasName(name);
-    let panes = '';
-    if (live) {
-      try { panes = String(tmux(['list-panes', '-s', '-t', name, '-F', 'x']).split('\n').filter(Boolean).length); }
-      catch { panes = '?'; }
-    }
-    const mgr = s.managerDir ? path.basename(s.managerDir) : '—';
-    console.log(`  ${name.padEnd(20)} ${(live ? '● live' : '○ saved').padEnd(7)} ${mgr.padEnd(22)} ${String(s.tasks.length).padEnd(6)} ${live ? panes : '-'}`);
+
+  const set = new Set(names);
+  const states = {};
+  for (const n of names) states[n] = loadState(n);
+  const children = {};
+  for (const n of names) {
+    const p = states[n].parent;
+    if (p && set.has(p)) (children[p] = children[p] || []).push(n);
   }
+  // Roots = no parent, or a parent that no longer exists (orphaned).
+  const roots = names.filter((n) => !states[n].parent || !set.has(states[n].parent)).sort();
+
+  const line = (n, depth) => {
+    const s = states[n];
+    const live = BACKEND === 'tmux' && tmuxHasName(n);
+    let panes = '';
+    if (live) { try { panes = `  panes:${tmux(['list-panes', '-s', '-t', n, '-F', 'x']).split('\n').filter(Boolean).length}`; } catch {} }
+    const mgr = s.managerDir ? path.basename(s.managerDir) : 'no manager';
+    const orphan = s.parent && !set.has(s.parent) ? `  ⚠ orphan (parent '${s.parent}' gone)` : '';
+    console.log(`  ${'  '.repeat(depth)}${live ? '●' : '○'} ${n}   manager:${mgr}  tasks:${s.tasks.length}${panes}${orphan}`);
+  };
+  const seen = new Set();
+  const walk = (n, depth) => {
+    if (seen.has(n)) return; seen.add(n);
+    line(n, depth);
+    for (const c of (children[n] || []).sort()) walk(c, depth + 1);
+  };
+
+  console.log('fleet sessions  (● live · ○ saved · indent = spawned-by):');
+  for (const r of roots) walk(r, 0);
+  for (const n of names.sort()) if (!seen.has(n)) walk(n, 0); // any cycle stragglers
 }
 
 // Remove a worktree by its path (resolve its main repo from the worktree itself).
@@ -908,7 +928,7 @@ SESSIONS  (a tmux session = a manager + its worker panes)
                                               --window: new window in the CURRENT tmux session
   fleet attach [--name X]                     attach to a session
   fleet status [session]                      one-glance view: manager + worker tree, live/saved
-  fleet sessions                              list all sessions (manager, tasks, live panes)
+  fleet sessions                              tree of ALL sessions (parent→child chains, orphans flagged)
   fleet resume [session] [--dry-run]          rebuild a session (manager + workers, conversations continued)
   fleet kill [--name X]                       stop a session's tmux (keeps worktrees + state → resumable)
 
