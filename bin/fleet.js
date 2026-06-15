@@ -304,8 +304,13 @@ const windowsBackend = {
   spawn({ wt, cmd }) { openTerminal(wt, cmd); },
   manager({ cwd = PROJECTS_ROOT } = {}) {
     // No multiplexer: the manager just runs claude in the current terminal, rooted at cwd.
+    if (process.platform !== 'win32') {
+      console.log('fleet: tmux not found — running in separate-window mode (no shared session, so');
+      console.log('       `fleet attach` / tiled panes / `resume` don\'t apply). Install tmux for the full');
+      console.log('       experience:  brew install tmux   |   sudo apt install tmux');
+    }
     recordManagerDir(SESSION, cwd);
-    console.log(`fleet: launching manager in this terminal at ${cwd} — type /fleet inside it.`);
+    console.log(`fleet: manager runs in THIS terminal at ${cwd}; workers open in separate windows. Type /fleet inside it.`);
     const r = spawnSync('claude', CLAUDE_FLAGS.split(/\s+/).filter(Boolean),
       { stdio: 'inherit', shell: true, cwd });
     process.exit(r.status || 0);

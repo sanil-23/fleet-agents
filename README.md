@@ -5,7 +5,10 @@ git worktree — and drive them all from one Claude session with a `/fleet` slas
 You describe the work in plain English; fleet picks the right approach and runs it.
 
 - **macOS / Linux / WSL** → agents are panes in one tmux session you can attach/detach.
-- **Windows** → each agent opens in its own terminal window.
+  *(tmux is what makes the manager + `/fleet` + `attach` + `resume` flow work — install it.)*
+- **No tmux (or Windows)** → fleet still runs, but in **separate-window mode**: the manager
+  runs in your current terminal and each worker opens in its own terminal window. There's no
+  shared session, so `fleet attach` / tiled panes / `resume` don't apply.
 
 ## Install
 
