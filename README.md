@@ -93,10 +93,12 @@ manager pane plus every worker, each continuing its previous conversation — **
 into it** (so it doubles as `fleet attach`). Use `fleet sessions` to see the names; `fleet
 resume` with no name picks the most recently-active one.
 
-From inside Claude you can also say `/fleet ls`, `/fleet status`, or `/fleet rm <repo> <task>`
-(removes a worker and anything it spawned). `/fleet rm self` removes the current pane and its
-chain — from a worker, that worker + its sub-workers; **from the manager, the whole session**
-(manager + all its workers).
+**Removing things** — `fleet rm <target>` is unified: the target is a worker (`<repo> <task>`),
+a session name, or `--self`. By default it removes the **whole chain it spawned** and **deletes
+the branches** (`--no-branch` keeps them, `--no-spawn` removes only the target, `--dry-run`
+previews). `fleet rm --self` from a worker removes that worker + its sub-workers; from the
+manager it removes the whole session. Same from inside Claude: `/fleet rm <repo> <task>`,
+`/fleet rm self`.
 
 Everything else — manual `fleet add`, custom skills, the `fleet pr` review/fix/merge toolkit —
 is in **`fleet help`**.

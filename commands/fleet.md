@@ -13,14 +13,13 @@ User input: `$ARGUMENTS`
 ## Routing
 
 - Empty input, or `ls`/`list`/`status` → run `fleet ls`.
-- `rm`/`remove`/`done <repo> <task>` → `fleet rm <repo> <task> --branch`. This removes that
-  worker **and every sub-worker it spawned** (the chain): closes their panes, removes their
-  worktrees, deletes branches.
-- `rm self` / `remove self` / "remove this worker" / "kill me and my workers" (no repo/task)
-  → run `fleet rm --self --branch`. Scope depends on where it runs:
-  - from a **worker** → removes that worker + every sub-worker it spawned (its chain).
-  - from the **manager** → removes the WHOLE session: the manager + all its workers + their
-    worktrees. (So killing the manager takes the full chain down with it.)
+- `rm`/`remove`/`done <repo> <task>` (or a session name) → `fleet rm <target>`. By default this
+  removes the target **and every sub-worker/child it spawned** (the chain): closes panes,
+  removes worktrees, **and deletes branches**. Add `--no-branch` to keep branches, `--no-spawn`
+  to remove only the target.
+- `rm self` / "remove this worker" / "kill me and my workers" → `fleet rm --self`. From a
+  **worker** it removes that worker + its sub-workers; from the **manager** it removes the WHOLE
+  session (manager + all workers). Branches deleted by default (use `--no-branch` to keep).
 - `kill`/`teardown` → `fleet kill`.
 - `resume …` → `fleet resume …`.
 - Anything else → it's one or more **task launches**. For each, run the **Dispatch decision**.

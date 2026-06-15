@@ -540,26 +540,31 @@ function removeOneSession(name, delBranch) {
 }
 
 // Remove a session by name AND every child/sub-child session it spawned.
-function cmdRemoveSession(args) {
-  const delBranch = args.includes('--branch');
-  const dry = args.includes('--dry-run') || args.includes('-n');
-  const name = args.find((a) => !a.startsWith('-'));
-  if (!name) die('usage: fleet sessions rm <session> [--branch] [--dry-run]');
+// Remove a session: kills it + its worktrees, and (unless noSpawn) all child/sub-child sessions.
+function rmSession(name, { delBranch, dry, noSpawn } = {}) {
   const exists = fs.existsSync(statePath(name)) || (BACKEND === 'tmux' && tmuxHasName(name));
   if (!exists) die(`no session '${name}' (see: fleet sessions)`);
-
-  // Collect the subtree (depth-first), then remove children before their parent.
   const children = sessionChildrenMap();
   const order = [];
-  (function walk(n) { (children[n] || []).forEach(walk); order.push(n); })(name);
+  (function walk(n) { if (!noSpawn) (children[n] || []).forEach(walk); order.push(n); })(name);
 
   if (dry) {
-    console.log(`fleet: would remove session '${name}'${order.length > 1 ? ` + ${order.length - 1} descendant session(s)` : ''}:`);
+    console.log(`fleet: would remove session '${name}'${order.length > 1 ? ` + ${order.length - 1} descendant session(s)` : ''}${delBranch ? ' + branches' : ''}:`);
     for (const s of order) console.log(`    - ${s} (${loadState(s).tasks.length} worktree(s))`);
     return;
   }
   console.log(`fleet: removing session '${name}'${order.length > 1 ? ` + ${order.length - 1} descendant session(s)` : ''}`);
   for (const s of order) removeOneSession(s, delBranch);
+}
+
+function cmdRemoveSession(args) {
+  const name = args.find((a) => !a.startsWith('-'));
+  if (!name) die('usage: fleet sessions rm <session> [--no-branch] [--no-spawn] [--dry-run]');
+  rmSession(name, {
+    delBranch: !args.includes('--no-branch'),   // default: delete branches too
+    dry: args.includes('--dry-run') || args.includes('-n'),
+    noSpawn: args.includes('--no-spawn'),
+  });
 }
 
 function cmdSessions(args) {
@@ -784,50 +789,16 @@ function killPane(t) {
   if (!t.noWorktree) killPaneForWt(t.wt);
 }
 
-// Remove a worker AND every sub-worker it spawned (chain), closing panes + worktrees.
-function cmdRm(args) {
-  const delBranch = args.includes('--branch');
-  const dry = args.includes('--dry-run') || args.includes('-n');
-  const self = args.includes('--self');
-  let reponame, task;
-  if (self) {
-    const id = process.env.FLEET_TASK;
-    if (id && id.includes('/')) {
-      // Inside a worker → remove this worker + every sub-worker it spawned.
-      reponame = id.slice(0, id.indexOf('/'));
-      task = id.slice(id.indexOf('/') + 1);
-    } else if (process.env.FLEET_SESSION) {
-      // No worker identity → we're the manager (pane 0). "self" = the whole session it runs:
-      // the manager + every worker it generated (and any child sessions).
-      const sess = process.env.FLEET_SESSION;
-      console.log(`fleet: 'self' from the manager → removing session '${sess}' (manager + all its workers)`);
-      const pass = [sess];
-      if (delBranch) pass.push('--branch');
-      if (dry) pass.push('--dry-run');
-      cmdRemoveSession(pass);
-      return;
-    } else if (process.env.TMUX_PANE) {
-      try { tmux(['kill-pane', '-t', process.env.TMUX_PANE]); } catch {}
-      console.log('fleet: closed current pane (no FLEET_TASK/FLEET_SESSION — chain not resolved)');
-      return;
-    } else {
-      die('--self requires being inside a fleet session');
-    }
-  } else {
-    const pos = args.filter((a) => !a.startsWith('-'));
-    if (pos.length < 2) die('usage: fleet rm <repo> <task> [--branch]   (or --self inside a worker)');
-    reponame = path.basename(pos[0].replace(/\/+$/, ''));
-    task = slug(pos[1]);
-  }
-
+// Remove a worker + (unless noSpawn) every sub-worker it spawned: closes panes, removes
+// worktrees, and (unless --no-branch) deletes branches.
+function rmWorker(reponame, task, { delBranch, dry, noSpawn, selfPaneId } = {}) {
   const rootId = `${reponame}/${task}`;
   const rootWt = path.join(WT_ROOT, reponame, task);
   const tasks = allTasks();
   const recordedRoot = tasks.find((t) => `${t.repo}/${t.task}` === rootId);
   const rootEntry = recordedRoot || { repo: reponame, task, wt: rootWt };
-  // For --self, fall back to the live pane id if state didn't record one.
-  if (self && !rootEntry.paneId && process.env.TMUX_PANE) rootEntry.paneId = process.env.TMUX_PANE;
-  const descendants = taskDescendants(rootId, tasks); // deepest-first
+  if (selfPaneId && !rootEntry.paneId) rootEntry.paneId = selfPaneId;
+  const descendants = noSpawn ? [] : taskDescendants(rootId, tasks); // deepest-first
   if (!recordedRoot && !fs.existsSync(rootWt) && !descendants.length && !rootEntry.paneId)
     die(`no worktree or recorded worker for ${rootId}`);
 
@@ -846,6 +817,39 @@ function cmdRm(args) {
     killPane(t);
   }
   console.log(`fleet: removed ${targets.length} worker(s)${descendants.length ? ` (incl. ${descendants.length} sub-worker(s))` : ''}${delBranch ? ' + branches' : ''}`);
+}
+
+// Unified remove. Target is a worker (<repo> <task> / <repo>/<task>), a session (<name>), or
+// --self. Default: remove the spawned chain + delete branches. Peel back with --no-spawn
+// (target only) and --no-branch (keep branches). --dry-run previews.
+function cmdRm(args) {
+  const opts = {
+    delBranch: !args.includes('--no-branch'),          // default: delete branches too
+    dry: args.includes('--dry-run') || args.includes('-n'),
+    noSpawn: args.includes('--no-spawn'),              // default: cascade the chain
+  };
+  const pos = args.filter((a) => !a.startsWith('-'));
+
+  if (args.includes('--self')) {
+    const id = process.env.FLEET_TASK;
+    if (id && id.includes('/'))
+      return rmWorker(id.slice(0, id.indexOf('/')), id.slice(id.indexOf('/') + 1), { ...opts, selfPaneId: process.env.TMUX_PANE });
+    if (process.env.FLEET_SESSION) {
+      console.log(`fleet: 'self' from the manager → removing session '${process.env.FLEET_SESSION}'`);
+      return rmSession(process.env.FLEET_SESSION, opts);
+    }
+    if (process.env.TMUX_PANE) { try { tmux(['kill-pane', '-t', process.env.TMUX_PANE]); } catch {} console.log('fleet: closed current pane.'); return; }
+    return die('--self requires being inside a fleet session');
+  }
+
+  if (pos.length >= 2) return rmWorker(path.basename(pos[0].replace(/\/+$/, '')), slug(pos[1]), opts);
+  if (pos.length === 1) {
+    const a = pos[0];
+    if (a.includes('/')) { const i = a.indexOf('/'); return rmWorker(path.basename(a.slice(0, i)), slug(a.slice(i + 1)), opts); }
+    if (fs.existsSync(statePath(a)) || (BACKEND === 'tmux' && tmuxHasName(a))) return rmSession(a, opts);
+    return die(`'${a}' is not a known session — for a worker use: fleet rm <repo> <task>`);
+  }
+  die('usage: fleet rm <repo> <task> | <repo>/<task> | <session> | --self   [--no-spawn] [--no-branch] [--dry-run]');
 }
 
 function cmdInstallClaude() {
@@ -941,10 +945,11 @@ SKILLS  (named prompt templates the worker is seeded with)
   fleet skill ls | add <name> <file.md> | rm <name> | show <name>
 
 CLEAN UP
-  fleet rm <repo> <task> [--branch] [--dry-run]   remove a worker + every sub-worker it spawned
-  fleet rm --self [--branch]                       remove self + chain — worker: it + sub-workers;
-                                                   manager: the whole session (manager + all workers)
-  fleet sessions rm <session> [--branch] [--dry-run]   remove a session + ALL child sessions
+  fleet rm <repo> <task> | <session> | --self      unified remove. Default: removes the spawned
+      [--no-spawn] [--no-branch] [--dry-run]       chain + deletes branches. Worker → it + sub-workers;
+                                                   session (or manager --self) → it + child sessions.
+                                                   --no-spawn: target only.  --no-branch: keep branches.
+  fleet sessions rm <session> [--no-spawn] [--no-branch] [--dry-run]   (same, for a session by name)
   fleet prune [session] [--dry-run]                drop recorded tasks whose worktree is gone
 
 PR REVIEW  (needs git + gh + jq; run in the repo or pass -C <repo>; open a pane, --here for foreground)
