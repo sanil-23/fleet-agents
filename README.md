@@ -21,11 +21,11 @@ Needs Node ≥ 16, `git`, the `claude` CLI, and `tmux` (macOS/Linux). Run `fleet
 
 ## Quickstart
 
-**1. Start a manager** — a tmux session with an orchestrator Claude in it:
+**1. Start a manager** — a tmux session with an orchestrator Claude in it. This drops you
+straight into the session (no separate attach needed):
 
 ```bash
-fleet manager --name xyz      # rooted in the current repo (or: fleet manager --name xyz ~/code/app)
-fleet attach --name xyz       # hop into the session
+fleet manager --name xyz      # rooted in the current repo (or pass a path: fleet manager --name xyz ~/code/app)
 ```
 
 **2. Inside that Claude, just describe the work:**
