@@ -658,15 +658,23 @@ function cmdResume(args) {
   const cmd = ['claude', '--continue', CLAUDE_FLAGS.trim()].filter(Boolean).join(' ');
 
   if (BACKEND === 'tmux') {
+    const alreadyLive = tmuxHasName(SESSION);
     const managerDir = state.managerDir || PROJECTS_ROOT;
     tmuxBackend.ensureSession(managerDir);
+    // launchManager is idempotent — it won't relaunch a manager that's already running.
     if (state.managerDir && tmuxBackend.launchManager(state.managerDir, true))
       console.log(`fleet: restored manager at ${state.managerDir}`);
+    // Skip workers whose pane is already live, so resuming a live/partial session never duplicates.
+    const live = livePaneIds();
+    let spawned = 0, skipped = 0;
     for (const t of tasks) {
-      backend.spawn({ wt: t.wt, cmd });
+      if (t.paneId && live.has(t.paneId)) { skipped++; continue; }
+      const paneId = backend.spawn({ wt: t.wt, cmd, taskId: `${t.repo}/${t.task}` });
+      recordTask(SESSION, t.repo, t.task, t.wt, { paneId, noWorktree: t.noWorktree });
       console.log(`fleet: resumed ${t.repo}/${t.task}`);
+      spawned++;
     }
-    console.log(`fleet: session '${SESSION}' restored (${tasks.length} agent${tasks.length === 1 ? '' : 's'}) — fleet attach to watch`);
+    console.log(`fleet: session '${SESSION}' ${alreadyLive ? 'already live' : 'restored'} — ${spawned} resumed${skipped ? `, ${skipped} already running` : ''} — fleet attach to watch`);
     tmuxBackend.attach();
   } else {
     for (const t of tasks) {
