@@ -664,23 +664,39 @@ function cmdPr(args) {
   cmdReview(map[sub], args.slice(1));
 }
 
+// Map "repo/task" → the session that recorded it.
+function taskSessionMap() {
+  const map = {};
+  if (!fs.existsSync(STATE_DIR)) return map;
+  for (const f of fs.readdirSync(STATE_DIR)) {
+    if (!f.endsWith('.json')) continue;
+    const session = f.replace(/\.json$/, '');
+    for (const t of loadState(session).tasks) map[`${t.repo}/${t.task}`] = session;
+  }
+  return map;
+}
+
 function cmdLs(args = []) {
   if (args.includes('--sessions') || args.includes('-s')) return cmdLsSessions();
   if (!fs.existsSync(WT_ROOT)) { console.log('no worktrees yet'); return; }
-  let any = false;
+  const sessionOf = taskSessionMap();
+  const rows = [];
   for (const repo of fs.readdirSync(WT_ROOT)) {
     const repoDir = path.join(WT_ROOT, repo);
     if (!fs.statSync(repoDir).isDirectory()) continue;
     for (const task of fs.readdirSync(repoDir)) {
       const wt = path.join(repoDir, task);
       if (!fs.existsSync(path.join(wt, '.git'))) continue;
-      any = true;
+      const id = `${repo}/${task}`;
       const br = gitQuiet(wt, ['symbolic-ref', '--short', 'HEAD']) || '?';
       const dirty = gitQuiet(wt, ['status', '--porcelain']).split('\n').filter(Boolean).length;
-      console.log(`  ${(`${repo}/${task}`).padEnd(40)} ${br} (${dirty} changes)`);
+      rows.push({ id, br, dirty, session: sessionOf[id] || '—' });
     }
   }
-  if (!any) console.log('no worktrees yet');
+  if (!rows.length) { console.log('no worktrees yet'); return; }
+  const w = Math.max(...rows.map((r) => r.id.length), 12);
+  console.log(`  ${'WORKTREE'.padEnd(w)}  ${'BRANCH'.padEnd(22)} CHANGES  SESSION`);
+  for (const r of rows) console.log(`  ${r.id.padEnd(w)}  ${r.br.padEnd(22)} ${String(r.dirty).padEnd(7)}  ${r.session}`);
 }
 
 // Rebuild a whole session after a reboot/kill: the manager pane (its conversation continued)
