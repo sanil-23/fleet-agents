@@ -140,9 +140,21 @@ function unrecordTaskEverywhere(repo, task) {
 function shq(s) { return `'${String(s).replace(/'/g, `'\\''`)}'`; }
 
 // Build the shell command string that launches claude with flags + prompt.
+// Multi-line / quote-containing prompts can't be inlined safely into a tmux send-keys command
+// (they leave the pane's shell stuck on an unterminated quote). So on Unix we write the prompt
+// to a temp file and read it back via command substitution — the command actually sent is one
+// short, safe line. The temp file deletes itself the moment it's read.
+let _promptSeq = 0;
 function claudeCmd(prompt) {
   const flags = CLAUDE_FLAGS.trim();
-  return ['claude', flags, shq(prompt)].filter(Boolean).join(' ');
+  if (process.platform === 'win32') return ['claude', flags, shq(prompt)].filter(Boolean).join(' ');
+  try {
+    const f = path.join(os.tmpdir(), `fleet-prompt-${process.pid}-${_promptSeq++}.txt`);
+    fs.writeFileSync(f, prompt);
+    return ['claude', flags, `"$(cat ${shq(f)}; rm -f ${shq(f)})"`].filter(Boolean).join(' ');
+  } catch {
+    return ['claude', flags, shq(prompt)].filter(Boolean).join(' ');
+  }
 }
 
 // Resolve the prompt arg: if it points at a readable file, load its contents.
