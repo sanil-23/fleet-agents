@@ -412,15 +412,41 @@ function listSkills() {
   return { builtins: read(path.join(__dirname, '..', 'prompts')), users: read(SKILLS_DIR) };
 }
 
+// Copy bundled built-in skills into the editable skills dir (~/.fleet/skills), so built-ins
+// and your own live in ONE place you can edit. Never clobbers a file you've already edited.
+function seedBuiltinSkills() {
+  let copied = 0;
+  try {
+    const src = path.join(__dirname, '..', 'prompts');
+    fs.mkdirSync(SKILLS_DIR, { recursive: true });
+    for (const f of fs.readdirSync(src)) {
+      if (!f.endsWith('.md')) continue;
+      const dest = path.join(SKILLS_DIR, f);
+      if (fs.existsSync(dest)) continue; // keep your edits
+      fs.copyFileSync(path.join(src, f), dest);
+      copied++;
+    }
+  } catch {}
+  return copied;
+}
+
 function cmdSkill(args) {
   const sub = args[0] || 'ls';
+  if (sub === 'init') {
+    const n = seedBuiltinSkills();
+    console.log(`fleet: skills dir ${SKILLS_DIR} ready${n ? ` — copied ${n} built-in${n === 1 ? '' : 's'}` : ' (already current)'}. Edit them or add your own.`);
+    return;
+  }
   if (sub === 'ls' || sub === 'list') {
     const { builtins, users } = listSkills();
-    console.log('built-in skills:');
-    builtins.forEach((s) => console.log(`  ${s}`));
-    console.log('your skills:');
-    if (users.length) users.forEach((s) => console.log(`  ${s}`));
-    else console.log('  (none — register with: fleet skill add <name> <file.md>)');
+    const all = [...new Set([...users, ...builtins])].sort();
+    console.log(`skills  (editable dir: ${SKILLS_DIR}):`);
+    for (const s of all) {
+      const inUser = users.includes(s);
+      const isBuiltin = builtins.includes(s);
+      const tag = inUser ? (isBuiltin ? 'built-in (editable copy)' : 'custom') : 'built-in (default — run: fleet skill init to edit)';
+      console.log(`  ${s.padEnd(16)} ${tag}`);
+    }
     return;
   }
   if (sub === 'add') {
@@ -439,9 +465,10 @@ function cmdSkill(args) {
     const name = args[1];
     if (!name) die('usage: fleet skill rm <name>');
     const p = path.join(SKILLS_DIR, `${name}.md`);
-    if (!fs.existsSync(p)) die(`no user skill '${name}' (built-ins can't be removed)`);
+    if (!fs.existsSync(p)) die(`no skill file '${name}' in ${SKILLS_DIR}`);
+    const stillBuiltin = listSkills().builtins.includes(name);
     fs.unlinkSync(p);
-    console.log(`fleet: removed skill '${name}'`);
+    console.log(`fleet: removed '${name}' from ${SKILLS_DIR}${stillBuiltin ? ' (reverts to the built-in default)' : ''}`);
     return;
   }
   if (sub === 'show' || sub === 'cat') {
@@ -914,6 +941,8 @@ function cmdInstallClaude() {
   const dest = path.join(dir, 'fleet.md');
   fs.copyFileSync(src, dest);
   console.log(`fleet: installed /fleet command -> ${dest}`);
+  const n = seedBuiltinSkills();
+  console.log(`fleet: skills in ${SKILLS_DIR}${n ? ` (seeded ${n} built-in${n === 1 ? '' : 's'})` : ''} — editable, add your own with 'fleet skill add'`);
   console.log('       Open Claude Code and type /fleet to use it.');
 }
 
@@ -995,8 +1024,9 @@ LAUNCH WORK  (spawns a worker pane in its own worktree)
   fleet research <repo> <task> "<issue|file.md>" [base]   read-only investigation (= --skill research)
       ( default repo '.' = current repo. --no-worktree runs in the repo itself, no branch. )
 
-SKILLS  (named prompt templates the worker is seeded with)
-  fleet skill ls | add <name> <file.md> | rm <name> | show <name>
+SKILLS  (named prompt templates the worker is seeded with; built-in + yours, all editable in ~/.fleet/skills)
+  fleet skill ls | init | add <name> <file.md> | rm <name> | show <name>
+      ( init copies the built-ins into ~/.fleet/skills so you can edit them )
 
 CLEAN UP
   fleet rm <name> | --self                         remove a task or session BY NAME. Default: removes

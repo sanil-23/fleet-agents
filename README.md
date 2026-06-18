@@ -73,7 +73,9 @@ The manager tells you what it chose. Want to force a choice? Just name it:
 /fleet review the auth changes  # force the review skill
 ```
 
-(See the built-in + your skills with `fleet skill ls`.)
+Skills (built-in `research`/`review`/`fix` + your own) all live in one editable folder,
+`~/.fleet/skills/` — `fleet skill ls` lists them, `fleet skill init` copies the built-ins there
+so you can tweak them, and `fleet skill add <name> <file.md>` registers your own.
 
 ## Commands you'll actually use
 
