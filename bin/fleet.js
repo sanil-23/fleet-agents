@@ -258,15 +258,31 @@ const tmuxBackend = {
   // Its workers join that same session, so everything stays in one session as switchable windows.
   managerWindow(cwd) {
     const sess = tmux(['display-message', '-p', '#S']);
+    // Idempotent: if a manager window already exists in this session, just switch to it
+    // instead of opening another one.
+    const existing = loadState(sess).managerWindow;
+    if (existing) {
+      try {
+        const wins = tmux(['list-windows', '-t', sess, '-F', '#{window_id}']).split('\n').filter(Boolean);
+        if (wins.includes(existing)) {
+          tmux(['select-window', '-t', existing]);
+          console.log(`fleet: manager already open in session '${sess}' — switched to it`);
+          return;
+        }
+      } catch {}
+    }
     try { tmux(['set-option', '-t', sess, 'pane-border-status', 'top']); } catch {}
     try { tmux(['set-option', '-t', sess, 'pane-border-format', ' #{b:pane_current_path} ']); } catch {}
     try { tmux(['set-environment', '-t', sess, 'FLEET_SESSION', sess]); } catch {}
-    const pid = tmux(['new-window', '-P', '-F', '#{pane_id}', '-c', cwd,
+    const info = tmux(['new-window', '-P', '-F', '#{window_id} #{pane_id}', '-c', cwd,
       '-n', path.basename(cwd) || 'manager', process.env.SHELL || '/bin/sh']);
+    const sp = info.indexOf(' ');
+    const winId = info.slice(0, sp), pid = info.slice(sp + 1);
     const launch = `cd ${shq(cwd)} && FLEET_SESSION=${shq(sess)} ` +
       ['claude', CLAUDE_FLAGS.trim()].filter(Boolean).join(' ');
     tmux(['send-keys', '-t', pid, launch, 'Enter']);
     recordManagerDir(sess, cwd);
+    const st = loadState(sess); st.managerWindow = winId; saveState(st);
     console.log(`fleet: manager opened as a new window in session '${sess}' at ${cwd}`);
   },
   attach() {
