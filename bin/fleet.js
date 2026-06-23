@@ -1012,7 +1012,8 @@ Backend: ${BACKEND}${BACKEND === 'tmux' ? ' (manager + worker panes in one tmux 
 
 SESSIONS  (a tmux session = a manager + its worker panes)
   fleet manager [dir] [--name X] [--window]   open an orchestrator claude (rooted at dir; default cwd)
-                                              --window: new window in the CURRENT tmux session
+                                              already inside tmux (no --name) → reuses the CURRENT session
+                                              (a new window); --name X always makes a separate session
   fleet attach [--name X]                     attach to a session
   fleet status [session]                      one-glance view: manager + worker tree, live/saved
   fleet list-sessions                         tree of everything: sessions, their tasks, sub-tasks, child sessions
@@ -1089,9 +1090,10 @@ function main() {
   let [cmd, ...rest] = process.argv.slice(2);
   // `--name`/`-n` overrides the session — but ONLY for session-scoped commands, so it
   // doesn't clash with review-family flags (e.g. merge.sh's `-n` = --dry-run).
+  let nameGiven = false;
   if (SESSION_CMDS.has(cmd)) {
     const [v, r] = takeFlag(rest, ['--name', '-n']);
-    rest = r; if (v) SESSION = v;
+    rest = r; if (v) { SESSION = v; nameGiven = true; }
   }
 
   switch (cmd) {
@@ -1106,10 +1108,13 @@ function main() {
       if (!d && r[0] && !r[0].startsWith('-')) d = r[0];
       const cwd = d ? path.resolve(d) : process.cwd();
       if (!fs.existsSync(cwd)) die(`manager dir does not exist: ${cwd}`);
-      if (windowMode) {
-        if (BACKEND !== 'tmux') die('--window requires the tmux backend');
-        if (!process.env.TMUX) die('--window must be run from inside tmux (it adds a window to the current session)');
+      // Already inside tmux and no separate session named → reuse the CURRENT session (open a
+      // window in it) instead of spinning up another tmux session.
+      if (!windowMode && !nameGiven && BACKEND === 'tmux' && process.env.TMUX) windowMode = true;
+      if (windowMode && BACKEND === 'tmux' && process.env.TMUX) {
         tmuxBackend.managerWindow(cwd);
+      } else if (windowMode) {
+        die('--window requires the tmux backend, run from inside tmux');
       } else {
         backend.manager({ cwd }); // records managerDir only when it actually launches (no drift)
       }
