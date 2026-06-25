@@ -256,17 +256,19 @@ const tmuxBackend = {
   },
   // Open a manager as a NEW WINDOW in the CURRENT tmux session (must be run from inside tmux).
   // Its workers join that same session, so everything stays in one session as switchable windows.
-  managerWindow(cwd) {
+  // Open the manager as a window (named `winName`, default the dir basename) in the current
+  // tmux session. Idempotent per window name: if it already exists, switch to it.
+  managerWindow(cwd, winName) {
     const sess = tmux(['display-message', '-p', '#S']);
-    // Idempotent: if a manager window already exists in this session, just switch to it
-    // instead of opening another one.
-    const existing = loadState(sess).managerWindow;
+    const name = winName || path.basename(cwd) || 'manager';
+    const windows = loadState(sess).managerWindows || {};
+    const existing = windows[name];
     if (existing) {
       try {
-        const wins = tmux(['list-windows', '-t', sess, '-F', '#{window_id}']).split('\n').filter(Boolean);
-        if (wins.includes(existing)) {
+        const live = tmux(['list-windows', '-t', sess, '-F', '#{window_id}']).split('\n').filter(Boolean);
+        if (live.includes(existing)) {
           tmux(['select-window', '-t', existing]);
-          console.log(`fleet: manager already open in session '${sess}' — switched to it`);
+          console.log(`fleet: manager '${name}' already open in session '${sess}' — switched to it`);
           return;
         }
       } catch {}
@@ -275,15 +277,15 @@ const tmuxBackend = {
     try { tmux(['set-option', '-t', sess, 'pane-border-format', ' #{b:pane_current_path} ']); } catch {}
     try { tmux(['set-environment', '-t', sess, 'FLEET_SESSION', sess]); } catch {}
     const info = tmux(['new-window', '-P', '-F', '#{window_id} #{pane_id}', '-c', cwd,
-      '-n', path.basename(cwd) || 'manager', process.env.SHELL || '/bin/sh']);
+      '-n', name, process.env.SHELL || '/bin/sh']);
     const sp = info.indexOf(' ');
     const winId = info.slice(0, sp), pid = info.slice(sp + 1);
     const launch = `cd ${shq(cwd)} && FLEET_SESSION=${shq(sess)} ` +
       ['claude', CLAUDE_FLAGS.trim()].filter(Boolean).join(' ');
     tmux(['send-keys', '-t', pid, launch, 'Enter']);
     recordManagerDir(sess, cwd);
-    const st = loadState(sess); st.managerWindow = winId; saveState(st);
-    console.log(`fleet: manager opened as a new window in session '${sess}' at ${cwd}`);
+    const st = loadState(sess); st.managerWindows = { ...(st.managerWindows || {}), [name]: winId }; saveState(st);
+    console.log(`fleet: manager '${name}' opened as a window in session '${sess}' at ${cwd}`);
   },
   attach() {
     if (!tmuxHas()) die('no fleet session running (try: fleet manager)');
@@ -1027,9 +1029,9 @@ const HELP = `fleet — run multiple Claude Code agents in parallel, each in its
 Backend: ${BACKEND}${BACKEND === 'tmux' ? ' (manager + worker panes in one tmux session)' : ' (each agent in its own terminal window)'}
 
 SESSIONS  (a tmux session = a manager + its worker panes)
-  fleet manager [dir] [--name X] [--window]   open an orchestrator claude (rooted at dir; default cwd)
-                                              already inside tmux (no --name) → reuses the CURRENT session
-                                              (a new window); --name X always makes a separate session
+  fleet manager [dir] [--name X] [--new-session]   open an orchestrator claude (rooted at dir; default cwd)
+                                              inside tmux → a WINDOW in the current session (named X),
+                                              idempotent; --new-session forces a separate tmux session
   fleet attach [--name X]                     attach to a session
   fleet status [session]                      one-glance view: manager + worker tree, live/saved
   fleet list-sessions                         tree of everything: sessions, their tasks, sub-tasks, child sessions
@@ -1115,24 +1117,26 @@ function main() {
   switch (cmd) {
     case 'manager':
     case 'up': {
-      // `fleet manager [--dir/-d <path>] [<path>] [--name X] [--window]` — root at a dir.
-      // Default dir: where fleet was invoked. --window opens it as a new window in the
-      // current tmux session instead of its own session.
+      // `fleet manager [dir] [--name X] [--new-session]`. Inside tmux it opens a WINDOW in the
+      // current session (named X if given), unless --new-session forces a separate tmux session.
       let [d, r] = takeFlag(rest, ['--dir', '-d']);
-      let windowMode = false;
-      r = r.filter((a) => ((a === '--window' || a === '-w') ? ((windowMode = true), false) : true));
+      let forceWindow = false, newSession = false;
+      r = r.filter((a) => {
+        if (a === '--window' || a === '-w') { forceWindow = true; return false; }
+        if (a === '--new-session') { newSession = true; return false; }
+        return true;
+      });
       if (!d && r[0] && !r[0].startsWith('-')) d = r[0];
       const cwd = d ? path.resolve(d) : process.cwd();
       if (!fs.existsSync(cwd)) die(`manager dir does not exist: ${cwd}`);
-      // Already inside tmux and no separate session named → reuse the CURRENT session (open a
-      // window in it) instead of spinning up another tmux session.
-      if (!windowMode && !nameGiven && BACKEND === 'tmux' && process.env.TMUX) windowMode = true;
-      if (windowMode && BACKEND === 'tmux' && process.env.TMUX) {
-        tmuxBackend.managerWindow(cwd);
-      } else if (windowMode) {
-        die('--window requires the tmux backend, run from inside tmux');
+      const inTmux = BACKEND === 'tmux' && !!process.env.TMUX;
+      // Default to a window in the current session when inside tmux; --new-session opts out.
+      const windowMode = forceWindow || (inTmux && !newSession);
+      if (windowMode) {
+        if (!inTmux) die('a manager window requires running inside tmux (or use --new-session)');
+        tmuxBackend.managerWindow(cwd, nameGiven ? SESSION : null);
       } else {
-        backend.manager({ cwd }); // records managerDir only when it actually launches (no drift)
+        backend.manager({ cwd }); // separate tmux session (records managerDir on launch only)
       }
       break;
     }

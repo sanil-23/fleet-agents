@@ -111,7 +111,11 @@ is in **`fleet help`**.
   in a throwaway worktree, but they share your real filesystem and credentials — only fan out
   work you'd trust to run on its own. (Set `FLEET_CLAUDE_FLAGS=""` to restore prompts.)
 - On macOS, fleet keeps the Mac awake while a session is alive so sleep doesn't kill agents.
-- Run several managers at once with different `--name`s (one per project/effort).
+- **Inside tmux**, `fleet manager [--name X]` opens a **window** in your current session (named
+  X), and re-running just switches to it — it won't spawn a separate tmux session or duplicate
+  windows. Pass `--new-session` when you want a fully separate, independently-resumable session
+  (the only mode outside tmux). Note: window-mode managers live in your current tmux session, so
+  `resume`/`list-sessions` track them at that session level; use `--new-session` for separate state.
 
 ## License
 
