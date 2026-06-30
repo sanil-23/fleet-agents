@@ -91,9 +91,10 @@ fleet kill    --name xyz         # stop the session (keeps the work; resumable)
 ```
 
 **Resume after a detach, kill, or reboot:** `fleet resume xyz` rebuilds session *xyz* — the
-manager pane plus every worker, each continuing its previous conversation — **and drops you
-into it** (so it doubles as `fleet attach`). Use `fleet list-sessions` to see the names; `fleet
-resume` with no name picks the most recently-active one.
+manager plus every worker, each continuing its previous conversation. **Inside tmux** it
+rebuilds into your **current** session (as windows) — it won't spin up a separate session;
+bare `fleet resume` defaults to the session you're in. Outside tmux it (re)creates the session
+and drops you in. Use `fleet list-sessions` to see the names.
 
 **Removing things** — `fleet rm <name>` removes **by name**: a task name, a session name, or
 `--self` (no `<repo> <task>` needed; use `<repo>/<task>` only to disambiguate a duplicated task

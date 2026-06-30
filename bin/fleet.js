@@ -783,14 +783,31 @@ function cmdResume(args) {
 
   const cmd = ['claude', '--continue', CLAUDE_FLAGS.trim()].filter(Boolean).join(' ');
 
+  if (BACKEND === 'tmux' && process.env.TMUX) {
+    // Inside tmux → rebuild into the CURRENT session as windows; never spin up a new session.
+    const sess = tmux(['display-message', '-p', '#S']);
+    if (state.managerDir) tmuxBackend.managerWindow(state.managerDir, SESSION === sess ? null : SESSION);
+    const live = livePaneIds();
+    let spawned = 0, skipped = 0;
+    for (const t of tasks) {
+      if (t.paneId && live.has(t.paneId)) { skipped++; continue; }
+      const pid = tmux(['new-window', '-P', '-F', '#{pane_id}', '-t', sess, '-c', t.wt, '-n', t.task, process.env.SHELL || '/bin/sh']);
+      const prefix = `FLEET_SESSION=${shq(sess)} FLEET_TASK=${shq(`${t.repo}/${t.task}`)}`;
+      tmux(['send-keys', '-t', pid, `${prefix} ${cmd}`, 'Enter']);
+      if (sess !== SESSION) unrecordTaskEverywhere(t.repo, t.task); // migrate into current session
+      recordTask(sess, t.repo, t.task, t.wt, { paneId: pid, noWorktree: t.noWorktree });
+      spawned++;
+    }
+    console.log(`fleet: resumed into current tmux session '${sess}' — ${spawned} agent(s)${skipped ? `, ${skipped} already running` : ''}`);
+    return;
+  }
   if (BACKEND === 'tmux') {
+    // Not inside tmux → (re)build a separate tmux session and attach.
     const alreadyLive = tmuxHasName(SESSION);
     const managerDir = state.managerDir || PROJECTS_ROOT;
     tmuxBackend.ensureSession(managerDir);
-    // launchManager is idempotent — it won't relaunch a manager that's already running.
     if (state.managerDir && tmuxBackend.launchManager(state.managerDir, true))
       console.log(`fleet: restored manager at ${state.managerDir}`);
-    // Skip workers whose pane is already live, so resuming a live/partial session never duplicates.
     const live = livePaneIds();
     let spawned = 0, skipped = 0;
     for (const t of tasks) {
@@ -1156,9 +1173,16 @@ function main() {
       // Target session: --name > positional <session> > most recently active manager.
       let [nm, r] = takeFlag(rest, ['--name', '-n']);
       const positional = r.find((a) => !a.startsWith('-'));
-      const target = nm || positional || mostRecentManagerSession();
+      let target = nm || positional;
+      if (!target) {
+        // Inside tmux, default to the session you're in (if it has state); else most recent.
+        if (BACKEND === 'tmux' && process.env.TMUX) {
+          try { const cur = tmux(['display-message', '-p', '#S']); if (fs.existsSync(statePath(cur))) target = cur; } catch {}
+        }
+        target = target || mostRecentManagerSession();
+      }
       if (!target) { console.log('fleet: no recorded manager sessions to resume'); break; }
-      if (!nm && !positional) console.log(`fleet: resuming most recently active manager → '${target}'`);
+      if (!nm && !positional) console.log(`fleet: resuming '${target}'`);
       SESSION = target;
       cmdResume(r);
       break;
