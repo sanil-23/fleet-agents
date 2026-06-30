@@ -898,7 +898,7 @@ function rmWorker(reponame, task, { delBranch, dry, noSpawn, selfPaneId } = {}) 
   const tasks = allTasks();
   const recordedRoot = tasks.find((t) => `${t.repo}/${t.task}` === rootId);
   const rootEntry = recordedRoot || { repo: reponame, task, wt: rootWt };
-  if (selfPaneId && !rootEntry.paneId) rootEntry.paneId = selfPaneId;
+  if (selfPaneId) rootEntry.paneId = selfPaneId; // self-removal: the live pane is authoritative
   const descendants = noSpawn ? [] : taskDescendants(rootId, tasks); // deepest-first
   if (!recordedRoot && !fs.existsSync(rootWt) && !descendants.length && !rootEntry.paneId)
     die(`no worktree or recorded worker for ${rootId}`);
